@@ -2,26 +2,197 @@
 @tailwind components;
 @tailwind utilities;
 
-@layer utilities {
-  .glass-panel {
-    @apply bg-slate-900/75 backdrop-blur-xl border border-slate-800/80 shadow-xl;
+:root {
+  --nen: #ffffff;
+  --xam: #f5f5f7;
+  --o: #e8e8ed;
+  --chu: #1d1d1f;
+  --mo: #6e6e73;
+  --mo2: #86868b;
+  --vien: #d2d2d7;
+  --vien-nhe: #e5e5ea;
+  --xanh: #0071e3;
+  --xanh-hover: #0077ed;
+  --link: #0066cc;
+  --cam: #bf4800;
+  --cam-bg: #fff1e8;
+  --la: #248a3d;
+  --la-bg: #e7f6ec;
+  --do: #d70015;
+  --do-bg: #fdecee;
+  --xanh-bg: #eaf3ff;
+  --shadow-card: 0 4px 20px rgba(0, 0, 0, 0.04);
+  --shadow-float: 0 12px 36px rgba(0, 0, 0, 0.12);
+}
+
+[data-theme='dark'] {
+  --nen: #000000;
+  --xam: #1d1d1f;
+  --o: #2c2c2e;
+  --chu: #f5f5f7;
+  --mo: #a1a1a6;
+  --mo2: #86868b;
+  --vien: #333336;
+  --vien-nhe: #2c2c2e;
+  --xanh: #0071e3;
+  --xanh-hover: #2997ff;
+  --link: #2997ff;
+  --cam: #ff9f4a;
+  --cam-bg: rgba(255, 159, 74, 0.14);
+  --la: #30d158;
+  --la-bg: rgba(48, 209, 88, 0.14);
+  --do: #ff453a;
+  --do-bg: rgba(255, 69, 58, 0.14);
+  --xanh-bg: rgba(0, 113, 227, 0.16);
+  --shadow-card: 0 4px 24px rgba(0, 0, 0, 0.35);
+  --shadow-float: 0 16px 40px rgba(0, 0, 0, 0.65);
+}
+
+@layer base {
+  html,
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', Inter,
+      'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+    background: var(--xam);
+    color: var(--chu);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    letter-spacing: -0.022em;
+    font-variant-numeric: tabular-nums;
   }
 }
 
+.sw-shell {
+  background-color: var(--xam);
+  color: var(--chu);
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', Inter,
+    'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+  letter-spacing: -0.022em;
+  font-variant-numeric: tabular-nums;
+}
+
+.sw-surface {
+  background-color: var(--nen);
+  color: var(--chu);
+}
+
+.sw-card {
+  background: var(--nen);
+  border: 1px solid var(--vien-nhe);
+  border-radius: 22px;
+  box-shadow: var(--shadow-card);
+}
+
+.sw-card-subtle {
+  background: var(--xam);
+  border: 1px solid var(--vien-nhe);
+  border-radius: 16px;
+}
+
+.sw-pill-btn {
+  border-radius: 980px;
+  font-weight: 500;
+  transition: all 0.18s ease;
+}
+
+.sw-pill-btn-primary {
+  border-radius: 980px;
+  font-weight: 600;
+  background: var(--xanh);
+  color: #ffffff;
+  transition: background-color 0.18s ease, transform 0.12s ease;
+}
+
+.sw-pill-btn-primary:hover:not(:disabled) {
+  background: var(--xanh-hover);
+}
+
+.sw-pill-btn-primary:active:not(:disabled) {
+  transform: scale(0.985);
+}
+
+.sw-pill-btn-primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.sw-seg {
+  background: var(--o);
+  border-radius: 980px;
+  padding: 3px;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.sw-seg-item {
+  border-radius: 980px;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--mo);
+  transition: all 0.16s ease;
+  cursor: pointer;
+}
+
+.sw-seg-item:hover {
+  color: var(--chu);
+}
+
+.sw-seg-item.active {
+  background: var(--nen);
+  color: var(--chu);
+  font-weight: 600;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+}
+
+.sw-input {
+  background: var(--nen);
+  border: 1px solid var(--vien);
+  color: var(--chu);
+  border-radius: 14px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.sw-input:focus {
+  outline: none;
+  border-color: var(--xanh);
+  box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.16);
+}
+
+.sw-input::placeholder {
+  color: var(--mo2);
+}
+
+/* 14-day SpyWinAds Sparkline */
+.spk {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 24px;
+}
+
+.spk-bar {
+  flex: 1;
+  min-width: 3px;
+  border-radius: 3px 3px 1px 1px;
+  transition: height 0.2s ease, opacity 0.15s ease;
+}
+
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 7px;
+  height: 7px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #020617;
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #334155;
+  background: var(--vien);
   border-radius: 9999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #475569;
+  background: var(--mo2);
 }
