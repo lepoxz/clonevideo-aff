@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   AlertTriangle,
@@ -10,6 +10,7 @@ import {
   Download,
   ExternalLink,
   EyeOff,
+  Film,
   Flame,
   FlaskConical,
   Globe,
@@ -19,19 +20,24 @@ import {
   LayoutGrid,
   Link2,
   List,
+  LogIn,
+  LogOut,
   MessageSquare,
   Moon,
   Play,
   Plus,
   RefreshCw,
+  Scissors,
   Search,
   Send,
   Settings,
+  ShieldCheck,
   ShoppingBag,
   Smartphone,
   Sparkles,
   Star,
   Sun,
+  Terminal,
   Trash2,
   TrendingUp,
   Video,
@@ -41,7 +47,15 @@ import {
 import { api } from './api';
 import type {
   AffiliateProduct,
+  AgentReachFullStatus,
   CloneJob,
+  CompetitorShop,
+  FlowAccount,
+  FlowModelOption,
+  FlowSceneUnit,
+  MarketIntel,
+  MetaShop,
+  MetaShopProduct,
   MuseToken,
   PublishTask,
   SystemStatus,
@@ -50,6 +64,7 @@ import type {
 
 type SidebarTab =
   | 'quet-tu-khoa'
+  | 'do-shop-meta'
   | 'dao-sau'
   | 'video-tiem-nang'
   | 'video-win'
@@ -58,6 +73,7 @@ type SidebarTab =
   | 'video-da-quet'
   | 'theo-doi'
   | 'video-test'
+  | 'clone-flow'
   | 'clone-muse'
   | 'kho-san-pham'
   | 'dang-bai'
@@ -68,6 +84,13 @@ type DeepDigFilter = 'all' | 'da-dao' | 'dang-dao' | 'cho-dao';
 type SortMode = 'strongest' | 'newest' | 'shops';
 type ViewMode = 'grid' | 'table';
 type ScanStage = 'idle' | 'scanning' | 'digging' | 'done';
+type FlowCloneMode =
+  | 'flow_agent_auto'
+  | 'flow_frames_start_end'
+  | 'flow_agent'
+  | 'flow_omni_ingredients'
+  | 'flow_veo_i2v'
+  | 'flow_veo_t2v';
 
 interface EnrichedVideo {
   raw: ViralVideo;
@@ -83,11 +106,24 @@ interface EnrichedVideo {
   fanpageTotal: number;
   totalAdsSameVideo: number;
   priceLabel: string;
+  originalPriceLabel: string;
   sparkline14d: number[];
   categoryTab: 'video-tiem-nang' | 'video-win' | 'video-scale' | 'sp-bo-sua';
   categoryLabel: string;
   digStatus: 'da-dao' | 'dang-dao' | 'cho-dao';
   localMediaUrl: string;
+  marketIntel: MarketIntel | null;
+  potentialScore: number;
+  potentialTier: string;
+  isPotential: boolean;
+  velocityViewsPerDay: number;
+  engagementRate: number;
+  primaryShopUrl: string;
+  primaryProductUrl: string;
+  placements: string[];
+  metaPageId: string;
+  shops: CompetitorShop[];
+  isDeepSpied: boolean;
 }
 
 const PLATFORM_META: Record<string, { label: string; short: string; pillBg: string; pillColor: string }> = {
@@ -95,6 +131,16 @@ const PLATFORM_META: Record<string, { label: string; short: string; pillBg: stri
   instagram: { label: 'IG Reels', short: 'IG Reels', pillBg: '#fbe9f2', pillColor: '#b91c6e' },
   facebook: { label: 'FB Reels', short: 'FB Reels', pillBg: 'var(--xanh-bg)', pillColor: '#1d4ed8' },
   threads: { label: 'Threads', short: 'Threads', pillBg: 'var(--o)', pillColor: 'var(--chu)' },
+  youtube: { label: 'YouTube', short: 'YouTube', pillBg: '#fee2e2', pillColor: '#dc2626' },
+  bilibili: { label: 'Bilibili', short: 'Bilibili', pillBg: '#e0f2fe', pillColor: '#0284c7' },
+  xiaohongshu: { label: 'Xiaohongshu', short: 'XHS', pillBg: '#ffe4e6', pillColor: '#e11d48' },
+  twitter: { label: 'X / Twitter', short: 'X', pillBg: 'var(--o)', pillColor: 'var(--chu)' },
+  reddit: { label: 'Reddit', short: 'Reddit', pillBg: '#ffedd5', pillColor: '#ea580c' },
+  tiktok: { label: 'TikTok', short: 'TikTok', pillBg: '#f3e8ff', pillColor: '#7e22ce' },
+  douyin: { label: 'Douyin', short: 'Douyin', pillBg: '#ecfeff', pillColor: '#0f766e' },
+  v2ex: { label: 'V2EX', short: 'V2EX', pillBg: 'var(--xam)', pillColor: 'var(--mo)' },
+  xueqiu: { label: 'Xueqiu', short: 'Xueqiu', pillBg: 'var(--xanh-bg)', pillColor: 'var(--link)' },
+  web: { label: 'Web Search', short: 'Web', pillBg: 'var(--xam)', pillColor: 'var(--mo)' },
 };
 
 const VIDEO_TAB_INFO: Record<
@@ -102,13 +148,14 @@ const VIDEO_TAB_INFO: Record<
   { title: string; subtitle: string; ruleTitle: string; rules: string[] }
 > = {
   'video-tiem-nang': {
-    title: 'Video Tiềm Năng',
-    subtitle: 'Video < 7 ngày tuổi · Đang chớm tăng tốc quảng cáo trên Meta & Reels',
-    ruleTitle: 'Luật lọc Video Tiềm Năng (SpyWinAds)',
+    title: 'Video Tiềm Năng (Đa Nền Tảng)',
+    subtitle:
+      'Tự đánh giá video đang viral ở mọi nền tảng · Bóc tách các Shop đang chạy, Link shop đang bán, Số lượng Ads & Giá đang bán thực tế',
+    ruleTitle: 'Cơ chế Tự Đánh Giá Video Tiềm Năng & Dò Shop Đang Bán',
     rules: [
-      'Tuổi file video gốc trên hệ thống Meta từ 1 đến 6 ngày.',
-      'Số quảng cáo Scale (< 7 ngày) mọc nhanh >= 10 mẫu QC đang chạy song song.',
-      'Ưu tiên video từ shop/fanpage mới chưa bị bão hoà thị trường.',
+      'Tự động chấm điểm Tiềm Năng (0–100đ, Hạng S/A/B/C) trên mọi nền tảng (Meta Ads, IG Reels, TikTok, YouTube, Xiaohongshu, Bilibili...) theo tốc độ view/ngày, tỷ lệ tương tác và tín hiệu thương mại.',
+      'Đối chiếu trực tiếp trên Meta Ad Library & Web Storefront để xác định chính xác các Shop đang chạy là ai và mở thẳng Link trang bán hàng thực tế.',
+      'Đếm số lượng quảng cáo đang active thực tế của từng shop và bóc tách trực tiếp Giá đang bán trên trang sản phẩm (Shopify / WooCommerce / Sàn TMĐT / Ad Copy).',
     ],
   },
   'video-win': {
@@ -204,9 +251,6 @@ function formatCompact(n: number): string {
 }
 
 function resolveLocalMediaUrl(v: ViralVideo): string {
-  if (v.video_url && (v.video_url.startsWith('/media/') || v.video_url.endsWith('.mp4'))) {
-    return v.video_url;
-  }
   if (v.local_path) {
     const normalized = v.local_path.replace(/\\/g, '/');
     const idx = normalized.indexOf('/media/');
@@ -214,63 +258,148 @@ function resolveLocalMediaUrl(v: ViralVideo): string {
     const relIdx = normalized.indexOf('media/');
     if (relIdx !== -1) return `/${normalized.slice(relIdx)}`;
   }
+  if (v.video_url) {
+    const vu = v.video_url.trim();
+    if (
+      vu.startsWith('/media/') ||
+      vu.includes('.mp4') ||
+      vu.includes('fbcdn.net') ||
+      vu.includes('tiktokcdn.com') ||
+      vu.includes('googlevideo.com')
+    ) {
+      return vu;
+    }
+  }
+  return '';
+}
+
+function resolveEmbedUrl(v: ViralVideo): string {
+  const s = (v.source_url || '').trim();
+  if (!s) return '';
+  const ytMatch =
+    s.match(/[?&]v=([A-Za-z0-9_-]{6,})/) ||
+    s.match(/youtu\.be\/([A-Za-z0-9_-]{6,})/) ||
+    s.match(/youtube\.com\/shorts\/([A-Za-z0-9_-]{6,})/);
+  if (ytMatch) {
+    return `https://www.youtube.com/embed/${ytMatch[1]}?autoplay=1&rel=0`;
+  }
+  const ttMatch = s.match(/tiktok\.com\/@[^/]+\/video\/(\d+)/);
+  if (ttMatch) {
+    return `https://www.tiktok.com/embed/v2/${ttMatch[1]}`;
+  }
+  const igMatch = s.match(/instagram\.com\/(?:[^/]+\/)?(?:reel|p)\/([A-Za-z0-9_-]+)/);
+  if (igMatch) {
+    return '';
+  }
+  const biliMatch = s.match(/bilibili\.com\/video\/(BV[A-Za-z0-9]+)/i);
+  if (biliMatch) {
+    return `https://player.bilibili.com/player.html?bvid=${biliMatch[1]}&high_quality=1&autoplay=1`;
+  }
   return '';
 }
 
 function enrichVideo(v: ViralVideo): EnrichedVideo {
-  const mod = v.id % 4;
-  let videoAgeDays = 10;
-  let categoryTab: EnrichedVideo['categoryTab'] = 'video-win';
-  let categoryLabel = 'Video Win';
+  const mi = v.market_intel || null;
+  const sigText = (v.sales_signals || []).join(' | ');
+  const fullText = `${v.title} ${v.caption} ${sigText}`;
 
-  if (mod === 2) {
-    videoAgeDays = 2 + (v.id % 4);
-    categoryTab = 'video-tiem-nang';
-    categoryLabel = 'Tiềm Năng';
-  } else if (mod === 1) {
-    videoAgeDays = 8 + (v.id % 6);
-    categoryTab = 'video-win';
-    categoryLabel = 'Video Win';
-  } else if (mod === 3) {
-    videoAgeDays = 16 + (v.id % 12);
-    categoryTab = 'video-scale';
-    categoryLabel = 'Video scale';
-  } else {
-    videoAgeDays = 34 + (v.id % 19);
-    categoryTab = 'sp-bo-sua';
-    categoryLabel = 'SP bò sữa';
+  // 1. Real Video File Age
+  const ageMatch = sigText.match(/File\s+(\d+)\s*ngày/i);
+  let videoAgeDays = mi?.video_age_days || (ageMatch ? Math.max(1, parseInt(ageMatch[1], 10)) : 0);
+  if (!videoAgeDays) {
+    const createdMs = Date.parse(v.created_at || '');
+    const diffDays = Number.isFinite(createdMs)
+      ? Math.max(1, Math.round((Date.now() - createdMs) / 86400000))
+      : 5;
+    videoAgeDays = diffDays;
   }
 
-  const isOldStoreWarning = v.id % 3 === 0;
-  const storeAgeDays = isOldStoreWarning ? 140 + ((v.id * 17) % 180) : 9 + ((v.id * 5) % 18);
+  // 2. Real Active Ads & Competitor Shops (Zero fake math formulas)
+  const scaleMatch = sigText.match(/Scale\s+(\d+)\s*QC/i);
+  const rawScaleAds = scaleMatch ? Math.max(1, parseInt(scaleMatch[1], 10)) : v.platform === 'meta_ads' ? 1 : 0;
 
-  const scoreFactor = Math.max(40, v.viral_score || 75);
-  const winCount = Math.max(6, Math.round((scoreFactor * 0.65) + (v.id * 7) % 38));
-  const scaleCount = Math.max(8, Math.round((scoreFactor * 0.72) + (v.id * 11) % 45));
-  const oldAdsCount = Math.max(2, Math.round((v.id * 5) % 24));
-  const shopActive = 2 + (v.id % 7);
-  const shopTotal = shopActive + 1 + (v.id % 5);
-  const fanpageActive = 3 + ((v.id * 2) % 9);
-  const fanpageTotal = fanpageActive + 2 + (v.id % 6);
-  const totalAdsSameVideo = winCount + scaleCount + oldAdsCount;
+  const views = Math.max(1, v.views || 0);
+  const likes = Math.max(0, v.likes || 0);
+  const comments = Math.max(0, v.comments || 0);
+  const shares = Math.max(0, v.shares || 0);
+  const engRate = mi?.engagement_rate ?? Number((((likes + comments * 3 + shares * 4) / views) * 100).toFixed(2));
+  const velocityViewsPerDay = mi?.velocity_views_per_day ?? Math.max(1, Math.round(views / Math.max(1, videoAgeDays)));
 
-  const prices = ['189.000đ', '249.000đ', '329.000đ', '489.000đ', '149.000đ'];
-  const priceLabel = prices[v.id % prices.length];
+  const shops: CompetitorShop[] = Array.isArray(mi?.shops) ? mi!.shops : [];
+  const totalAdsSameVideo = mi ? Math.max(mi.total_active_ads || 0, rawScaleAds) : rawScaleAds;
+  const shopActive = mi ? Math.max(mi.active_shops_count || 0, shops.length) : v.platform === 'meta_ads' ? 1 : 0;
+  const shopTotal = shopActive;
+  const fanpageActive = shopActive;
+  const fanpageTotal = shopTotal;
 
+  const scaleCount = videoAgeDays <= 7 ? totalAdsSameVideo : rawScaleAds;
+  const winCount = videoAgeDays > 7 && videoAgeDays <= 30 ? totalAdsSameVideo : 0;
+  const oldAdsCount = videoAgeDays > 30 ? totalAdsSameVideo : 0;
+
+  const potentialScore = mi?.potential_score ?? Math.min(95, Math.max(35, v.viral_score || 75));
+  const potentialTier = mi?.potential_tier || (potentialScore >= 82 ? 'S' : potentialScore >= 68 ? 'A' : potentialScore >= 52 ? 'B' : 'C');
+  const isPotential = mi ? Boolean(mi.is_potential) : potentialScore >= 68 && videoAgeDays <= 45;
+  const isDeepSpied = Boolean(mi && (mi.spy_status === 'deep_spied' || shops.length > 0 || v.product_url || v.shop_url));
+  const primaryShopUrl = v.shop_url || mi?.primary_shop_url || shops.find((s) => s.shop_url)?.shop_url || '';
+  const primaryProductUrl = v.product_url || mi?.primary_product_url || shops.find((s) => s.product_url)?.product_url || '';
+  const placements =
+    Array.isArray(v.ad_placements) && v.ad_placements.length > 0
+      ? v.ad_placements.map((p) => p.toLowerCase())
+      : ['facebook', 'instagram', 'threads'].includes((v.platform || '').toLowerCase())
+      ? [(v.platform || '').toLowerCase()]
+      : ['facebook', 'instagram'];
+  const metaPageId = v.meta_page_id || shops.find((s) => s.page_id)?.page_id || '';
+
+  // 3. Real Category Classification (Tiềm năng / Win / Scale / Bò sữa)
+  let categoryTab: EnrichedVideo['categoryTab'] = 'video-win';
+  let categoryLabel = 'Video Win';
+  if (rawScaleAds >= 2 || totalAdsSameVideo >= 10) {
+    categoryTab = 'video-scale';
+    categoryLabel = 'Video scale';
+  } else if (isPotential && videoAgeDays <= 14) {
+    categoryTab = 'video-tiem-nang';
+    categoryLabel = `Tiềm Năng (${potentialTier})`;
+  } else if (videoAgeDays > 30) {
+    categoryTab = 'sp-bo-sua';
+    categoryLabel = 'SP bò sữa';
+  } else {
+    categoryTab = 'video-win';
+    categoryLabel = 'Video Win';
+  }
+
+  const isOldStoreWarning = videoAgeDays > 90;
+  const storeAgeDays = videoAgeDays;
+
+  // 4. Real Selling Price Detection
+  const priceSig = (v.sales_signals || []).find((s) => s.startsWith('Giá:'));
+  const priceRegex =
+    fullText.match(/(?:₫|vnđ|vnd)\s*\d{1,3}(?:[.,]\d{3})+/i) ||
+    fullText.match(/\b\d{1,3}(?:[.,]\d{3})+\s*(?:₫|đ|vnđ|vnd)\b/i) ||
+    fullText.match(/\b(?:chỉ|giá|sale|còn)\s+\d{2,4}\s*k\b/i) ||
+    fullText.match(/\$\s*\d+(?:\.\d{1,2})?\b/);
+  const miPrice = mi?.price_range && mi.price_range !== 'Chưa niêm yết giá' ? mi.price_range : '';
+  const priceLabel = v.selling_price
+    ? v.selling_price
+    : miPrice
+    ? miPrice
+    : priceSig
+    ? priceSig.replace(/^Giá:\s*/i, '')
+    : priceRegex
+    ? priceRegex[0]
+    : 'Chưa niêm yết giá';
+  const originalPriceLabel = v.original_price || shops.find((s) => s.original_price)?.original_price || '';
+
+  // 5. Momentum curve derived from real potentialScore & velocity
+  const baseMomentum = Math.min(78, Math.max(22, Math.round(potentialScore * 0.68)));
   const sparkline14d: number[] = [];
   for (let i = 0; i < 14; i++) {
-    const wave = Math.sin((i + v.id) * 0.75) * 18;
-    const trend = categoryTab === 'video-tiem-nang' || categoryTab === 'video-scale' ? i * 4.2 : i * 2.1;
-    const val = Math.min(100, Math.max(16, Math.round(28 + trend + wave + ((v.id * (i + 3)) % 17))));
+    const growth = isPotential || categoryTab === 'video-scale' ? i * 2.1 : i * 0.8;
+    const val = Math.min(100, Math.max(16, Math.round(baseMomentum + growth - (13 - i) * 1.1)));
     sparkline14d.push(val);
   }
 
   const localMediaUrl = resolveLocalMediaUrl(v);
-  const digStatus: EnrichedVideo['digStatus'] = localMediaUrl
-    ? 'da-dao'
-    : v.id % 5 === 0
-    ? 'cho-dao'
-    : 'da-dao';
+  const digStatus: EnrichedVideo['digStatus'] = localMediaUrl ? 'da-dao' : 'cho-dao';
 
   return {
     raw: v,
@@ -286,11 +415,24 @@ function enrichVideo(v: ViralVideo): EnrichedVideo {
     fanpageTotal,
     totalAdsSameVideo,
     priceLabel,
+    originalPriceLabel,
     sparkline14d,
     categoryTab,
     categoryLabel,
     digStatus,
     localMediaUrl,
+    marketIntel: mi,
+    potentialScore,
+    potentialTier,
+    isPotential,
+    velocityViewsPerDay,
+    engagementRate: engRate,
+    primaryShopUrl,
+    primaryProductUrl,
+    placements,
+    metaPageId,
+    shops,
+    isDeepSpied,
   };
 }
 
@@ -346,6 +488,76 @@ function Sparkline({
   );
 }
 
+type FlowEngineKind = 'agent' | 'frames' | 'ingredients' | 't2v';
+
+interface FlowEngineBadge {
+  label: string;
+  bg: string;
+  color: string;
+  title: string;
+}
+
+function detectFlowEngineKind(rawText: string, allowLooseModels = false): FlowEngineKind | null {
+  const text = rawText.toLowerCase();
+  if (!text) return null;
+  if (
+    text.includes('frame') ||
+    text.includes('start_end') ||
+    text.includes('first_end') ||
+    text.includes('first-end') ||
+    text.includes('first→end') ||
+    text.includes('khung đầu')
+  ) {
+    return 'frames';
+  }
+  if (text.includes('agent') || text.includes('tác nhân') || text.includes('tac nhan')) {
+    return 'agent';
+  }
+  if (allowLooseModels) {
+    if (text.includes('ingredient')) return 'ingredients';
+    if (text.includes('t2v') || text.includes('text')) return 't2v';
+  }
+  return null;
+}
+
+function mapFlowEngineKindToBadge(kind: FlowEngineKind, title: string): FlowEngineBadge {
+  switch (kind) {
+    case 'frames':
+      return { label: '🎯 First Frame → End Frame', bg: 'var(--cam-bg)', color: 'var(--cam)', title };
+    case 'agent':
+      return { label: '🤖 Tác nhân Google Flow', bg: 'var(--xanh-bg)', color: 'var(--link)', title };
+    case 'ingredients':
+      return { label: '🧩 OmniFlash Ingredients', bg: 'var(--la-bg)', color: 'var(--la)', title };
+    case 't2v':
+      return { label: '✍️ Text-to-Video', bg: 'var(--xam)', color: 'var(--chu)', title };
+  }
+}
+
+function getFlowJobEngineBadge(job: CloneJob): FlowEngineBadge | null {
+  const sceneEngine = (job.scene_plan?.find((s) => s.engine_used)?.engine_used || '').trim();
+  const sceneKind = detectFlowEngineKind(sceneEngine, true);
+  if (sceneKind) {
+    return mapFlowEngineKindToBadge(sceneKind, `Engine thực thi: ${sceneEngine}`);
+  }
+
+  const tokenLabel = (job.muse_token_label || '').trim();
+  const tokenKind = detectFlowEngineKind(tokenLabel, false);
+  if (tokenKind) {
+    return mapFlowEngineKindToBadge(tokenKind, tokenLabel);
+  }
+
+  const mode = (job.clone_mode || '').trim().toLowerCase();
+  const modeMap: Record<string, FlowEngineKind> = {
+    flow_frames_start_end: 'frames',
+    flow_agent: 'agent',
+    flow_agent_auto: 'agent',
+    flow_omni_ingredients: 'ingredients',
+    flow_veo_t2v: 't2v',
+  };
+  const fallbackKind = modeMap[mode];
+  return fallbackKind ? mapFlowEngineKindToBadge(fallbackKind, `Chế độ: ${job.clone_mode}`) : null;
+}
+
 export default function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     const saved = localStorage.getItem('spywin_theme');
@@ -395,26 +607,49 @@ export default function App() {
   const [matchType, setMatchType] = useState<'exact' | 'broad'>('exact');
   const [marketCountry, setMarketCountry] = useState('VN');
   const [crawlPlatform, setCrawlPlatform] = useState('all');
-  const [crawlEngine, setCrawlEngine] = useState('crawl4ai_free');
+  const [crawlEngine, setCrawlEngine] = useState('agent_reach');
   const [scanStage, setScanStage] = useState<ScanStage>('idle');
   const [inspectUrlInput, setInspectUrlInput] = useState('');
   const [isInspecting, setIsInspecting] = useState(false);
   const [crawlNotes, setCrawlNotes] = useState<string[]>([]);
 
+  // Agent-Reach Direct Action Explorer (View 1) & Account/Channel Manager (View 7)
+  const [arExecChannel, setArExecChannel] = useState('youtube');
+  const [arExecAction, setArExecAction] = useState('search');
+  const [arExecQuery, setArExecQuery] = useState('');
+  const [arExecRunning, setArExecRunning] = useState(false);
+  const [arExecResult, setArExecResult] = useState<string>('');
+  const [arStatus, setArStatus] = useState<AgentReachFullStatus | null>(null);
+  const [arLoading, setArLoading] = useState(false);
+  const [arBusyKey, setArBusyKey] = useState<string | null>(null);
+  const [arActionOutput, setArActionOutput] = useState<string>('');
+  const [arCfgKey, setArCfgKey] = useState('openai-key');
+  const [arCfgVal, setArCfgVal] = useState('');
+
+  // rea-video Decompose & Market Spy state
+  const [reaBusyVideoId, setReaBusyVideoId] = useState<number | null>(null);
+  const [spyingVideoId, setSpyingVideoId] = useState<number | null>(null);
+  const [batchSpyRunning, setBatchSpyRunning] = useState(false);
+  const [potentialTierFilter, setPotentialTierFilter] = useState<'all' | 'S' | 'A' | 'has_shop'>('all');
+  const [potentialSpyCountry, setPotentialSpyCountry] = useState<'AUTO' | 'VN' | 'US'>('AUTO');
+  const [customSpyQuery, setCustomSpyQuery] = useState('');
+
   // View 2: Đào sâu
   const [deepFilter, setDeepFilter] = useState<DeepDigFilter>('all');
 
-  // View 4: Muse Clone Studio
+  // View 4: Organic Remake & Muse Studio
   const [selectedVideoId, setSelectedVideoId] = useState<number>(1);
-  const [selectedProductId, setSelectedProductId] = useState<number>(1);
-  const [cloneMode, setCloneMode] = useState('muse_prompt_remap');
-  const [ctaPosition, setCtaPosition] = useState('bottom_banner');
+  const [selectedProductId, setSelectedProductId] = useState<number>(0);
+  const [cloneMode, setCloneMode] = useState('rea_video_remake');
+  const [ctaPosition, setCtaPosition] = useState('clean_organic');
   const [linkPlacementMode, setLinkPlacementMode] = useState('both');
   const [promptScript, setPromptScript] = useState('');
   const [antiDuplicate, setAntiDuplicate] = useState(true);
   const [batchCount, setBatchCount] = useState(1);
   const [isLaunchingClone, setIsLaunchingClone] = useState(false);
   const [activeCloneJobId, setActiveCloneJobId] = useState<number | null>(null);
+  const [activeFlowJobId, setActiveFlowJobId] = useState<number | null>(null);
+  const knownCompletedJobIdsRef = useRef<Set<number> | null>(null);
   const [showBulkModal, setShowBulkModal] = useState(false);
   const [bulkTokenText, setBulkTokenText] = useState(
     'Muse_VN_04|muse_sess_demo_token_vn04_1b_xyz|http://103.1.1.10:8080\nMuse_VN_05|muse_sess_demo_token_vn05_1b_abc|'
@@ -441,10 +676,156 @@ export default function App() {
   const [pubCaption, setPubCaption] = useState('');
   const [pubFirstComment, setPubFirstComment] = useState('');
 
-  // Settings
+  // Settings & VLM Model Fetcher
   const [tregApiKey, setTregApiKey] = useState('');
   const [bioBrandName, setBioBrandName] = useState('');
   const [bioBrandSub, setBioBrandSub] = useState('');
+  const [reaVlmEnabled, setReaVlmEnabled] = useState('0');
+  const [reaVlmBaseUrl, setReaVlmBaseUrl] = useState('https://api.openai.com/v1');
+  const [reaVlmApiKey, setReaVlmApiKey] = useState('');
+  const [reaVlmModel, setReaVlmModel] = useState('gemini-2.5-pro,gpt-4o');
+  const [reaReportLang, setReaReportLang] = useState('en');
+  const [vlmFetchedModels, setVlmFetchedModels] = useState<string[]>([]);
+  const [vlmRecommendedModels, setVlmRecommendedModels] = useState<string[]>([]);
+  const [vlmFetchingModels, setVlmFetchingModels] = useState(false);
+
+  // Google Flow (flow.google.com) Accounts & Studio state
+  const [flowAccounts, setFlowAccounts] = useState<FlowAccount[]>([]);
+  const [flowModels, setFlowModels] = useState<FlowModelOption[]>([]);
+  const [selectedFlowAccountId, setSelectedFlowAccountId] = useState<number>(0);
+  const [flowCloneMode, setFlowCloneMode] = useState<FlowCloneMode>('flow_agent_auto');
+  const [flowModelId, setFlowModelId] = useState<string>('omni_1_2_flash_10s_portrait');
+  const [customFlowModelId, setCustomFlowModelId] = useState<string>('');
+  const [syncingFlowModels, setSyncingFlowModels] = useState(false);
+  const [flowVeoPrompt, setFlowVeoPrompt] = useState<string>('');
+  const [flowScenePlan, setFlowScenePlan] = useState<FlowSceneUnit[]>([]);
+  const [flowRefFrameUrl, setFlowRefFrameUrl] = useState<string>('');
+  const [previewFlowClipUrl, setPreviewFlowClipUrl] = useState<string>('');
+  const [flowGeneratingPrompt, setFlowGeneratingPrompt] = useState(false);
+  const [showFlowImportModal, setShowFlowImportModal] = useState(false);
+  const [flowBulkText, setFlowBulkText] = useState('');
+  const [flowBulkLimit, setFlowBulkLimit] = useState(50);
+  const [flowBulkTier, setFlowBulkTier] = useState('Flow Pro');
+  const [flowLoginLabel, setFlowLoginLabel] = useState('');
+  const [flowLoginProxy, setFlowLoginProxy] = useState('');
+  const [flowBusyAccId, setFlowBusyAccId] = useState<number | null>(null);
+
+  const availableFlowModels = useMemo<FlowModelOption[]>(() => {
+    if (flowModels.length > 0) return flowModels;
+    return [
+      {
+        id: 'omni_1_2_flash_10s_portrait',
+        group: 'OmniFlash / Gemini Omni (Mới nhất 2026)',
+        label: '⚡ Omni 1.2 Flash (≤10s) — Dọc 9:16 (Mới nhất · Nhanh & Có Free 50/ngày)',
+        gemini_model: 'veo-3.1-fast-generate-preview',
+        duration_hint: '8-10s',
+        badge: 'Mới nhất · OmniFlash',
+      },
+      {
+        id: 'omni_1_2_flash_15s_portrait',
+        group: 'OmniFlash / Gemini Omni (Mới nhất 2026)',
+        label: '🔥 Omni 1.2 Flash (11–15s) — Dọc 9:16 (Video dài · AI Plus/Pro/Ultra)',
+        gemini_model: 'veo-3.1-generate-preview',
+        duration_hint: '11-15s',
+        badge: '15s Extended',
+      },
+      {
+        id: 'gemini_omni_multimodal_portrait',
+        group: 'OmniFlash / Gemini Omni (Mới nhất 2026)',
+        label: '✨ Gemini Omni Multimodal — Ingredients / Scenebuilder 9:16',
+        gemini_model: 'veo-3.1-generate-preview',
+        duration_hint: '8-15s',
+        badge: 'Ingredients AI',
+      },
+      {
+        id: 'veo_3_1_lite_portrait',
+        group: 'Veo 3.1 (Thế hệ mới nhất)',
+        label: '🚀 Veo 3.1 Lite — Dọc 9:16 (Siêu nhanh · Có trong gói Free)',
+        gemini_model: 'veo-3.1-fast-generate-preview',
+        duration_hint: '8s',
+        badge: 'Tiết kiệm Credit',
+      },
+      {
+        id: 'veo_3_1_t2v_fast_portrait',
+        group: 'Veo 3.1 (Thế hệ mới nhất)',
+        label: '⚡ Veo 3.1 Fast — Dọc 9:16 (Chuẩn Ads / Affiliate)',
+        gemini_model: 'veo-3.1-fast-generate-preview',
+        duration_hint: '8s',
+        badge: 'Khuyên dùng Ads',
+      },
+      {
+        id: 'veo_3_1_t2v_fast_portrait_ultra',
+        group: 'Veo 3.1 (Thế hệ mới nhất)',
+        label: '💎 Veo 3.1 Fast Ultra — Dọc 9:16 (Độ nét cao · AI Ultra)',
+        gemini_model: 'veo-3.1-fast-generate-preview',
+        duration_hint: '8s',
+        badge: 'Ultra 1080p+',
+      },
+      {
+        id: 'veo_3_1_t2v_portrait',
+        group: 'Veo 3.1 (Thế hệ mới nhất)',
+        label: '🎬 Veo 3.1 Quality / Pro — Dọc 9:16 (Điện ảnh cao cấp + Audio)',
+        gemini_model: 'veo-3.1-generate-preview',
+        duration_hint: '8s',
+        badge: 'Max Quality',
+      },
+      {
+        id: 'nano_banana_pro_omni_flash',
+        group: 'Nano Banana + Flow Hybrid (Ingredients 2026)',
+        label: '🍌 Nano Banana Pro + Omni 1.2 Flash — Giữ chuẩn SP & Nhân vật 9:16',
+        gemini_model: 'veo-3.1-fast-generate-preview',
+        duration_hint: '10s',
+        badge: 'Giữ mẫu SP 99%',
+      },
+      {
+        id: 'nano_banana_2_1_veo_3_1',
+        group: 'Nano Banana + Flow Hybrid (Ingredients 2026)',
+        label: '🍌 Nano Banana 2.1 + Veo 3.1 — Dựng cảnh SP Studio 9:16',
+        gemini_model: 'veo-3.1-generate-preview',
+        duration_hint: '8s',
+        badge: 'Studio SP',
+      },
+      {
+        id: 'veo_3_0_fast_portrait',
+        group: 'Veo 3.0 & Veo 2 (Tương thích rộng)',
+        label: 'Veo 3.0 Fast — Dọc 9:16',
+        gemini_model: 'veo-3.0-fast-generate-001',
+        duration_hint: '8s',
+        badge: 'Veo 3.0',
+      },
+      {
+        id: 'veo_3_0_portrait',
+        group: 'Veo 3.0 & Veo 2 (Tương thích rộng)',
+        label: 'Veo 3.0 Standard — Dọc 9:16',
+        gemini_model: 'veo-3.0-generate-001',
+        duration_hint: '8s',
+        badge: 'Veo 3.0',
+      },
+      {
+        id: 'veo_2_1_fast_d_15_t2v',
+        group: 'Veo 3.0 & Veo 2 (Tương thích rộng)',
+        label: 'Veo 2.1 Fast — Dọc 9:16 (Ổn định / Nhẹ credit)',
+        gemini_model: 'veo-2.0-generate-001',
+        duration_hint: '8s',
+        badge: 'Legacy',
+      },
+    ];
+  }, [flowModels]);
+
+  const groupedFlowModels = useMemo(() => {
+    const map = new Map<string, FlowModelOption[]>();
+    for (const m of availableFlowModels) {
+      const grp = m.group || 'Mô hình Google Flow khác';
+      if (!map.has(grp)) map.set(grp, []);
+      map.get(grp)!.push(m);
+    }
+    return Array.from(map.entries());
+  }, [availableFlowModels]);
+
+  const selectedFlowModelMeta = useMemo(
+    () => availableFlowModels.find((m) => m.id === flowModelId) || null,
+    [availableFlowModels, flowModelId]
+  );
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -459,6 +840,18 @@ export default function App() {
     localStorage.setItem('spywin_testlist', JSON.stringify(testlistIds));
   }, [testlistIds]);
 
+  // Dedicated Module: Dò Shop & Sản Phẩm Đang Bán (Meta Ads -> FB / IG / Threads)
+  const [metaShops, setMetaShops] = useState<MetaShop[]>([]);
+  const [metaShopQuery, setMetaShopQuery] = useState('dây chuyền bạc');
+  const [metaShopCountry, setMetaShopCountry] = useState<'VN' | 'US' | 'ALL'>('VN');
+  const [metaShopPlatform, setMetaShopPlatform] = useState<'all' | 'facebook' | 'instagram' | 'threads'>('all');
+  const [metaShopSearching, setMetaShopSearching] = useState(false);
+  const [metaTotalMarketAds, setMetaTotalMarketAds] = useState(0);
+  const [selectedMetaShop, setSelectedMetaShop] = useState<MetaShop | null>(null);
+  const [selectedMetaShopProducts, setSelectedMetaShopProducts] = useState<MetaShopProduct[]>([]);
+  const [scanningShopKey, setScanningShopKey] = useState<string | null>(null);
+  const [importingShopProdId, setImportingShopProdId] = useState<number | null>(null);
+
   const notify = (text: string, type: 'ok' | 'err' = 'ok') => {
     setToast({ text, type });
     setTimeout(() => setToast(null), 4000);
@@ -466,17 +859,26 @@ export default function App() {
 
   const refreshAll = async () => {
     try {
-      const [st, vd, tk, pr, jb, pt] = await Promise.all([
+      const [st, vd, ms, tk, fl, pr, jb, pt] = await Promise.all([
         api.getStatus(),
-        api.getVideos(filterPlatform, globalSearch.trim()),
+        api.getVideos('all', ''),
+        api.getMetaShops(),
         api.getMuseTokens(),
+        api.getFlowAccounts(),
         api.getProducts(),
         api.getCloneJobs(),
         api.getPublishTasks(),
       ]);
       setStatus(st);
       setVideos(vd.videos);
+      setMetaShops(ms.shops || []);
+      if (!selectedMetaShop && ms.shops && ms.shops.length > 0) {
+        setSelectedMetaShop(ms.shops[0]);
+        setSelectedMetaShopProducts(ms.shops[0].preview_products || []);
+      }
       setTokens(tk.tokens);
+      setFlowAccounts(fl.accounts);
+      if (fl.models && fl.models.length > 0) setFlowModels(fl.models);
       setProducts(pr.products);
       setJobs(jb.jobs);
       setPublishTasks(pt.tasks);
@@ -484,18 +886,30 @@ export default function App() {
       setTregApiKey(st.settings?.treg_api_key || '');
       setBioBrandName(st.settings?.bio_brand_name || '');
       setBioBrandSub(st.settings?.bio_brand_subtitle || '');
+      setReaVlmEnabled(st.settings?.rea_vlm_enabled || '0');
+      setReaVlmBaseUrl(st.settings?.rea_vlm_base_url || 'https://api.openai.com/v1');
+      setReaVlmApiKey(st.settings?.rea_vlm_api_key || '');
+      setReaVlmModel(st.settings?.rea_vlm_model || 'gemini-2.5-pro,gpt-4o');
+      setReaReportLang(st.settings?.rea_report_lang || 'en');
 
       if (vd.videos.length > 0 && !vd.videos.some((v) => v.id === selectedVideoId)) {
         setSelectedVideoId(vd.videos[0].id);
         setPromptScript(vd.videos[0].hook_text || vd.videos[0].title);
       }
-      if (pr.products.length > 0 && !pr.products.some((p) => p.id === selectedProductId)) {
-        setSelectedProductId(pr.products[0].id);
+      if (selectedProductId > 0 && pr.products.length > 0 && !pr.products.some((p) => p.id === selectedProductId)) {
+        setSelectedProductId(0);
       }
       const completed = jb.jobs.find((j) => j.status === 'completed');
-      if (completed) {
-        if (pubJobId === null) setPubJobId(completed.id);
-        if (activeCloneJobId === null) setActiveCloneJobId(completed.id);
+      const completedFlow = jb.jobs.find((j) => j.clone_mode.startsWith('flow_') && j.status === 'completed');
+      const completedMuse = jb.jobs.find((j) => !j.clone_mode.startsWith('flow_') && j.status === 'completed');
+      if (completed && pubJobId === null) {
+        setPubJobId(completed.id);
+      }
+      if (completedFlow && activeFlowJobId === null) {
+        setActiveFlowJobId(completedFlow.id);
+      }
+      if (completedMuse && activeCloneJobId === null) {
+        setActiveCloneJobId(completedMuse.id);
       }
     } catch (e: unknown) {
       notify(e instanceof Error ? e.message : 'Lỗi kết nối backend', 'err');
@@ -504,24 +918,31 @@ export default function App() {
 
   useEffect(() => {
     refreshAll();
-  }, [filterPlatform]);
+  }, []);
 
-  // Auto-poll when clone jobs are actively processing
+  // Auto-poll when clone jobs or Flow browser logins are actively processing
   useEffect(() => {
-    const hasRunning = jobs.some((j) => !['completed', 'failed'].includes(j.status));
-    if (!hasRunning) return;
+    const hasRunningJob = jobs.some((j) => !['completed', 'failed'].includes(j.status));
+    const hasPendingFlowLogin = flowAccounts.some((a) => a.status === 'login_pending');
+    if (!hasRunningJob && !hasPendingFlowLogin) return;
     const timer = setInterval(async () => {
       try {
-        const [jb, tk, st] = await Promise.all([api.getCloneJobs(), api.getMuseTokens(), api.getStatus()]);
+        const [jb, tk, fl, st] = await Promise.all([
+          api.getCloneJobs(),
+          api.getMuseTokens(),
+          api.getFlowAccounts(),
+          api.getStatus(),
+        ]);
         setJobs(jb.jobs);
         setTokens(tk.tokens);
+        setFlowAccounts(fl.accounts);
         setStatus(st);
       } catch {
         // ignore transient poll error
       }
-    }, 1000);
+    }, 1500);
     return () => clearInterval(timer);
-  }, [jobs]);
+  }, [jobs, flowAccounts]);
 
   const enrichedVideos = useMemo(
     () => videos.filter((v) => !hiddenIds.includes(v.id)).map(enrichVideo),
@@ -531,7 +952,7 @@ export default function App() {
   // Counts for Sidebar Navigation
   const tabCounts = useMemo(() => {
     return {
-      'video-tiem-nang': enrichedVideos.filter((e) => e.categoryTab === 'video-tiem-nang').length,
+      'video-tiem-nang': enrichedVideos.filter((e) => e.isPotential || e.categoryTab === 'video-tiem-nang').length,
       'video-win': enrichedVideos.filter((e) => e.categoryTab === 'video-win').length,
       'video-scale': enrichedVideos.filter((e) => e.categoryTab === 'video-scale').length,
       'sp-bo-sua': enrichedVideos.filter((e) => e.categoryTab === 'sp-bo-sua').length,
@@ -540,6 +961,38 @@ export default function App() {
       'video-test': enrichedVideos.filter((e) => testlistIds.includes(e.raw.id)).length,
     };
   }, [enrichedVideos, watchlistIds, testlistIds]);
+
+  const potentialSummary = useMemo(() => {
+    const potList = enrichedVideos.filter((e) => e.isPotential || e.categoryTab === 'video-tiem-nang');
+    const uniqueDomains = new Set<string>();
+    let shopsWithLinks = 0;
+    let totalAds = 0;
+    let pricedCount = 0;
+    const platformsSet = new Set<string>();
+
+    for (const item of potList) {
+      platformsSet.add(item.raw.platform);
+      totalAds += item.totalAdsSameVideo;
+      if (item.priceLabel && item.priceLabel !== 'Chưa niêm yết giá') pricedCount += 1;
+      for (const s of item.shops) {
+        const key = (s.domain || s.shop_name || '').toLowerCase();
+        if (key && !uniqueDomains.has(key)) {
+          uniqueDomains.add(key);
+          if (s.shop_url) shopsWithLinks += 1;
+        }
+      }
+    }
+    return {
+      totalPotential: potList.length,
+      tierSCount: potList.filter((e) => e.potentialTier === 'S').length,
+      platformsCount: platformsSet.size,
+      uniqueShopsCount: uniqueDomains.size,
+      shopsWithLinks,
+      totalActiveAds: totalAds,
+      pricedCount,
+      unspiedCount: potList.filter((e) => !e.isDeepSpied).length,
+    };
+  }, [enrichedVideos]);
 
   const isVideoTab = (tab: SidebarTab) =>
     [
@@ -554,49 +1007,125 @@ export default function App() {
 
   const displayedVideos = useMemo(() => {
     let list = enrichedVideos;
-    if (activeTab === 'video-tiem-nang') list = list.filter((e) => e.categoryTab === 'video-tiem-nang');
-    else if (activeTab === 'video-win') list = list.filter((e) => e.categoryTab === 'video-win');
+    if (activeTab === 'video-tiem-nang') {
+      list = list.filter((e) => e.isPotential || e.categoryTab === 'video-tiem-nang');
+      if (potentialTierFilter === 'S') list = list.filter((e) => e.potentialTier === 'S');
+      else if (potentialTierFilter === 'A') list = list.filter((e) => e.potentialTier === 'A');
+      else if (potentialTierFilter === 'has_shop') list = list.filter((e) => e.shops.length > 0 || Boolean(e.primaryShopUrl));
+    } else if (activeTab === 'video-win') list = list.filter((e) => e.categoryTab === 'video-win');
     else if (activeTab === 'video-scale') list = list.filter((e) => e.categoryTab === 'video-scale');
     else if (activeTab === 'sp-bo-sua') list = list.filter((e) => e.categoryTab === 'sp-bo-sua');
     else if (activeTab === 'theo-doi') list = list.filter((e) => watchlistIds.includes(e.raw.id));
     else if (activeTab === 'video-test') list = list.filter((e) => testlistIds.includes(e.raw.id));
 
+    if (filterPlatform !== 'all') {
+      const fp = filterPlatform.toLowerCase();
+      list = list.filter((e) => {
+        const rawPf = (e.raw.platform || '').toLowerCase();
+        if (rawPf === fp) return true;
+        if (['facebook', 'instagram', 'threads'].includes(fp) && e.placements.includes(fp)) return true;
+        if (fp === 'meta_ads' && Boolean(e.raw.meta_library_id)) return true;
+        return false;
+      });
+    }
+
     if (globalSearch.trim()) {
       const q = globalSearch.toLowerCase();
-      list = list.filter((e) =>
-        `${e.raw.title} ${e.raw.caption} ${e.raw.author} ${e.raw.hook_text}`.toLowerCase().includes(q)
-      );
+      list = list.filter((e) => {
+        const shopNames = e.shops.map((s) => `${s.shop_name} ${s.domain} ${s.selling_price} ${s.product_url || ''}`).join(' ');
+        return `${e.raw.title} ${e.raw.caption} ${e.raw.author} ${e.raw.hook_text} ${e.primaryShopUrl} ${e.primaryProductUrl} ${e.priceLabel} ${shopNames}`
+          .toLowerCase()
+          .includes(q);
+      });
     }
 
     return [...list].sort((a, b) => {
-      if (sortMode === 'strongest') return b.raw.viral_score - a.raw.viral_score || b.winCount - a.winCount;
+      if (activeTab === 'video-tiem-nang' && sortMode === 'strongest') {
+        return (
+          b.potentialScore - a.potentialScore ||
+          b.shops.length - a.shops.length ||
+          b.totalAdsSameVideo - a.totalAdsSameVideo
+        );
+      }
+      if (sortMode === 'strongest') return b.raw.viral_score - a.raw.viral_score || b.totalAdsSameVideo - a.totalAdsSameVideo;
       if (sortMode === 'newest') return a.videoAgeDays - b.videoAgeDays;
-      return b.shopTotal - a.shopTotal;
+      return b.shopTotal - a.shopTotal || b.totalAdsSameVideo - a.totalAdsSameVideo;
     });
-  }, [enrichedVideos, activeTab, watchlistIds, testlistIds, globalSearch, sortMode]);
+  }, [enrichedVideos, activeTab, potentialTierFilter, filterPlatform, watchlistIds, testlistIds, globalSearch, sortMode]);
 
   const drawerVideo = useMemo(
     () => enrichedVideos.find((e) => e.raw.id === drawerVideoId) || null,
     [enrichedVideos, drawerVideoId]
   );
 
+  useEffect(() => {
+    if (drawerVideo) {
+      setCustomSpyQuery(drawerVideo.marketIntel?.product_query || '');
+    }
+  }, [drawerVideoId]);
+
   const selectedVideo = useMemo(
     () => videos.find((v) => v.id === selectedVideoId) || videos[0],
     [videos, selectedVideoId]
   );
   const selectedProduct = useMemo(
-    () => products.find((p) => p.id === selectedProductId) || products[0],
+    () => (selectedProductId > 0 ? products.find((p) => p.id === selectedProductId) || null : null),
     [products, selectedProductId]
   );
+  const flowJobs = useMemo(() => jobs.filter((j) => j.clone_mode.startsWith('flow_')), [jobs]);
+  const museJobs = useMemo(() => jobs.filter((j) => !j.clone_mode.startsWith('flow_')), [jobs]);
   const completedJobs = useMemo(() => jobs.filter((j) => j.status === 'completed'), [jobs]);
+  const completedFlowJobs = useMemo(() => flowJobs.filter((j) => j.status === 'completed'), [flowJobs]);
+  const completedMuseJobs = useMemo(() => museJobs.filter((j) => j.status === 'completed'), [museJobs]);
   const activeCloneJob = useMemo(
-    () => completedJobs.find((j) => j.id === activeCloneJobId) || completedJobs[0] || null,
-    [completedJobs, activeCloneJobId]
+    () => completedMuseJobs.find((j) => j.id === activeCloneJobId) || completedMuseJobs[0] || null,
+    [completedMuseJobs, activeCloneJobId]
   );
+  const activeFlowJob = useMemo(
+    () => flowJobs.find((j) => j.id === activeFlowJobId) || completedFlowJobs[0] || flowJobs[0] || null,
+    [flowJobs, completedFlowJobs, activeFlowJobId]
+  );
+  const activeFlowEngineBadge = useMemo(
+    () => (activeFlowJob ? getFlowJobEngineBadge(activeFlowJob) : null),
+    [activeFlowJob]
+  );
+
+  useEffect(() => {
+    setPreviewFlowClipUrl('');
+  }, [activeFlowJob?.id, activeFlowJob?.output_video_url]);
   const selectedPubJob = useMemo(
     () => completedJobs.find((j) => j.id === pubJobId) || completedJobs[0],
     [completedJobs, pubJobId]
   );
+
+  // Auto-focus the 9:16 Video Player onto any job the moment it transitions to 'completed'
+  useEffect(() => {
+    if (jobs.length === 0) return;
+    const nowDone = jobs.filter((j) => j.status === 'completed');
+    if (knownCompletedJobIdsRef.current === null) {
+      knownCompletedJobIdsRef.current = new Set(nowDone.map((j) => j.id));
+      return;
+    }
+    const newlyCompleted = nowDone.filter((j) => !knownCompletedJobIdsRef.current!.has(j.id));
+    for (const j of nowDone) {
+      knownCompletedJobIdsRef.current.add(j.id);
+    }
+    // Remove any job that was retried (no longer in nowDone) so its next completion triggers auto-focus too
+    const nowDoneSet = new Set(nowDone.map((j) => j.id));
+    for (const oldId of Array.from(knownCompletedJobIdsRef.current)) {
+      if (!nowDoneSet.has(oldId)) {
+        knownCompletedJobIdsRef.current.delete(oldId);
+      }
+    }
+    if (newlyCompleted.length > 0) {
+      const latestNew = newlyCompleted[0]; // jobs are ordered DESC by id
+      setPubJobId(latestNew.id);
+      const latestFlow = newlyCompleted.find((j) => j.clone_mode.startsWith('flow_'));
+      if (latestFlow) setActiveFlowJobId(latestFlow.id);
+      const latestMuse = newlyCompleted.find((j) => !j.clone_mode.startsWith('flow_'));
+      if (latestMuse) setActiveCloneJobId(latestMuse.id);
+    }
+  }, [jobs]);
 
   useEffect(() => {
     if (!selectedPubJob) return;
@@ -648,6 +1177,302 @@ export default function App() {
     notify(`Đã nạp ${kws.length} từ khoá xu hướng vào giỏ quét`);
   };
 
+  const loadAgentReachStatus = async () => {
+    setArLoading(true);
+    try {
+      const data = await api.getAgentReachStatus();
+      setArStatus(data);
+    } catch (err: unknown) {
+      notify(err instanceof Error ? err.message : 'Không tải được trạng thái Agent-Reach', 'err');
+    } finally {
+      setArLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'cai-dat' && !arStatus) {
+      loadAgentReachStatus();
+    }
+  }, [activeTab]);
+
+  const loginPollRef = useRef<number | null>(null);
+  const [ensuringVideoId, setEnsuringVideoId] = useState<number | null>(null);
+  const [analyzingAiVideoId, setAnalyzingAiVideoId] = useState<number | null>(null);
+  const [playingCardId, setPlayingCardId] = useState<number | null>(null);
+
+  const handleEnsureVideoMp4 = async (videoId: number) => {
+    setEnsuringVideoId(videoId);
+    try {
+      const res = await api.ensureVideoMp4(videoId);
+      if (res.ok) {
+        notify(`Đã sẵn sàng phát MP4 gốc cho video #${videoId}!`);
+        await refreshAll();
+      }
+    } catch (err: unknown) {
+      notify(err instanceof Error ? err.message : 'Không tải được luồng MP4 trực tiếp', 'err');
+    } finally {
+      setEnsuringVideoId(null);
+    }
+  };
+
+  const handleAnalyzeVideoAi = async (videoId: number) => {
+    setAnalyzingAiVideoId(videoId);
+    try {
+      const res = await api.analyzeVideoAi(videoId);
+      if (res.ok) {
+        notify(`Đã phân tích AI chuyên sâu cho video #${videoId}!`);
+        await refreshAll();
+      }
+    } catch (err: unknown) {
+      notify(err instanceof Error ? err.message : 'Lỗi phân tích AI', 'err');
+    } finally {
+      setAnalyzingAiVideoId(null);
+    }
+  };
+
+  useEffect(() => {
+    if (!drawerVideo) return;
+    if (!drawerVideo.localMediaUrl && ensuringVideoId !== drawerVideo.raw.id) {
+      handleEnsureVideoMp4(drawerVideo.raw.id);
+    }
+  }, [drawerVideo?.raw.id]);
+
+  useEffect(() => {
+    return () => {
+      if (loginPollRef.current) window.clearInterval(loginPollRef.current);
+    };
+  }, []);
+
+  const handleAgentReachChannelOp = async (channel: string, operation: string) => {
+    const busy = `${channel}:${operation}`;
+    setArBusyKey(busy);
+    try {
+      const res = await api.agentReachChannelAction(channel, operation);
+      if (res.ok) {
+        notify(res.message || `Đã chạy "${operation}" cho kênh ${channel}`);
+        setArActionOutput(JSON.stringify(res, null, 2));
+        if (operation === 'login' && res.status === 'browser_opened') {
+          if (loginPollRef.current) window.clearInterval(loginPollRef.current);
+          let attempts = 0;
+          loginPollRef.current = window.setInterval(async () => {
+            attempts += 1;
+            if (attempts > 60) {
+              if (loginPollRef.current) {
+                window.clearInterval(loginPollRef.current);
+                loginPollRef.current = null;
+              }
+              return;
+            }
+            try {
+              const updated = await api.getAgentReachStatus();
+              setArStatus(updated);
+              const target = updated.channels?.find((c) => c.channel === channel);
+              if (target?.logged_in && !updated.browser?.running) {
+                if (loginPollRef.current) {
+                  window.clearInterval(loginPollRef.current);
+                  loginPollRef.current = null;
+                }
+                notify(`Đã tự động đóng Chrome & lưu Cookie đăng nhập cho ${channel}!`);
+              }
+            } catch {
+              // ignore transient poll error
+            }
+          }, 2500);
+        }
+      } else {
+        const msg = res.error?.message || `Thao tác ${operation} trên ${channel} thất bại`;
+        notify(msg, 'err');
+        setArActionOutput(JSON.stringify(res, null, 2));
+      }
+      await loadAgentReachStatus();
+    } catch (err: unknown) {
+      notify(err instanceof Error ? err.message : 'Lỗi gọi Agent-Reach', 'err');
+    } finally {
+      setArBusyKey(null);
+    }
+  };
+
+  const handleAgentReachBrowserOp = async (operation: string, param = '') => {
+    setArBusyKey(`browser:${operation}`);
+    try {
+      const res = await api.agentReachBrowserAction(operation, param);
+      if (res.ok) {
+        notify(`Browser "${operation}" thành công!`);
+      } else {
+        notify(res.error?.message || `Lỗi browser ${operation}`, 'err');
+      }
+      setArActionOutput(JSON.stringify(res, null, 2));
+      await loadAgentReachStatus();
+    } catch (err: unknown) {
+      notify(err instanceof Error ? err.message : 'Lỗi browser Agent-Reach', 'err');
+    } finally {
+      setArBusyKey(null);
+    }
+  };
+
+  const handleAgentReachConfigure = async () => {
+    if (!arCfgVal.trim()) {
+      notify('Vui lòng nhập giá trị cấu hình', 'err');
+      return;
+    }
+    setArBusyKey('configure');
+    try {
+      const res = await api.agentReachConfigure(arCfgKey, arCfgVal.trim());
+      if (res.ok) {
+        notify(`Đã cấu hình ${arCfgKey} cho Agent-Reach!`);
+        setArCfgVal('');
+      } else {
+        notify(res.error?.message || 'Lỗi cấu hình Agent-Reach', 'err');
+      }
+      setArActionOutput(JSON.stringify(res, null, 2));
+      await loadAgentReachStatus();
+    } catch (err: unknown) {
+      notify(err instanceof Error ? err.message : 'Lỗi configure Agent-Reach', 'err');
+    } finally {
+      setArBusyKey(null);
+    }
+  };
+
+  const handleAgentReachExecute = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setArExecRunning(true);
+    try {
+      const res = await api.agentReachExecute({
+        channel: arExecChannel,
+        action: arExecAction,
+        query: arExecQuery,
+        limit: 5,
+        save_to_videos: true,
+        country: marketCountry,
+      });
+      setArExecResult(
+        `${res.command}\n` +
+          (res.diagnostic ? `Chẩn đoán: ${res.diagnostic}\n` : '') +
+          `Đã lưu: ${res.saved_count} video.\n` +
+          JSON.stringify(res.raw_response, null, 2).slice(0, 1200)
+      );
+      if (res.saved_count > 0) {
+        notify(`Agent-Reach [${arExecChannel}] đã quét & lưu ${res.saved_count} video mới!`);
+        await refreshAll();
+      } else if (res.diagnostic) {
+        notify(res.diagnostic, 'err');
+      } else {
+        notify('Đã chạy Agent-Reach (xem chi tiết JSON bên dưới)');
+      }
+    } catch (err: unknown) {
+      notify(err instanceof Error ? err.message : 'Lỗi chạy Agent-Reach', 'err');
+    } finally {
+      setArExecRunning(false);
+    }
+  };
+
+  const handleReaDecompose = async (videoId: number, useVlm?: boolean, autoFillMuseScript = false) => {
+    setReaBusyVideoId(videoId);
+    notify(`Đang chạy rea-video decompose phân tích shot-by-shot cho video #${videoId}...`);
+    try {
+      const res = await api.decomposeVideoRea(videoId, useVlm);
+      const bd = res.breakdown;
+      if (autoFillMuseScript && bd) {
+        const shotLines = (bd.shots || [])
+          .slice(0, 5)
+          .map((s) => `[${s.start.toFixed(1)}s-${s.end.toFixed(1)}s ${s.label} · ${s.remake_route}] ${s.prompt || bd.verdict}`)
+          .join('\n');
+        setPromptScript(shotLines || bd.remake_md_excerpt || bd.video_md_excerpt || bd.verdict);
+        setCloneMode('rea_video_remake');
+      }
+      if (videoId === selectedVideoId && bd) {
+        if (bd.veo_prompt_en) setFlowVeoPrompt(bd.veo_prompt_en);
+        if (bd.scene_units && bd.scene_units.length > 0) setFlowScenePlan(bd.scene_units);
+      }
+      notify(
+        `Phân tích xong #${videoId}: ${bd.shots_count} shots · ${bd.verdict.slice(0, 70)}`
+      );
+      await refreshAll();
+      return res;
+    } catch (err: unknown) {
+      notify(err instanceof Error ? err.message : 'Lỗi khi chạy rea-video decompose', 'err');
+      return null;
+    } finally {
+      setReaBusyVideoId(null);
+    }
+  };
+
+  const handleEvaluateSingleVideo = async (videoId: number, queryOverride = '') => {
+    setSpyingVideoId(videoId);
+    notify(`Đang tự đánh giá & dò Shop đang bán, Link bán, Số lượng Ads & Giá cho video #${videoId}...`);
+    try {
+      const res = await api.evaluateVideoPotential(videoId, {
+        custom_query: queryOverride.trim(),
+        country: potentialSpyCountry === 'AUTO' ? '' : potentialSpyCountry,
+        deep_spy: true,
+      });
+      setVideos((prev) => prev.map((v) => (v.id === videoId ? res.video : v)));
+      const mi = res.market_intel;
+      notify(
+        `Xong #${videoId} [Hạng ${mi.potential_tier} · ${mi.potential_score}đ]: ${mi.active_shops_count} shop · ${mi.total_active_ads} QC active · Giá: ${mi.price_range}`
+      );
+    } catch (err: unknown) {
+      notify(err instanceof Error ? err.message : 'Lỗi khi dò Shop & đánh giá tiềm năng', 'err');
+    } finally {
+      setSpyingVideoId(null);
+    }
+  };
+
+  const handleEvaluatePotentialBatch = async () => {
+    setBatchSpyRunning(true);
+    const unspiedVisible = displayedVideos.filter((e) => !e.isDeepSpied).map((e) => e.raw.id);
+    const targetIds = (unspiedVisible.length > 0 ? unspiedVisible : displayedVideos.map((e) => e.raw.id)).slice(0, 5);
+    notify(`Đang tự động đánh giá đa nền tảng & dò Shop/Link/Giá/Ads cho ${targetIds.length || 5} video đầu...`);
+    try {
+      const res = await api.evaluateVideosPotentialBatch({
+        video_ids: targetIds.length > 0 ? targetIds : undefined,
+        limit: 5,
+        country: potentialSpyCountry === 'AUTO' ? '' : potentialSpyCountry,
+      });
+      setVideos(res.videos);
+      notify(
+        `Đã tự đánh giá ${res.evaluated_count} video & dò sâu Shop/Link bán/Giá thực tế cho ${res.deep_spied_count} video!`
+      );
+    } catch (err: unknown) {
+      notify(err instanceof Error ? err.message : 'Lỗi chạy tự đánh giá hàng loạt', 'err');
+    } finally {
+      setBatchSpyRunning(false);
+    }
+  };
+
+  const handleFetchReaVlmModels = async () => {
+    if (!reaVlmBaseUrl.trim()) {
+      notify('Vui lòng nhập VLM Endpoint Base URL trước khi Fetch Model', 'err');
+      return;
+    }
+    setVlmFetchingModels(true);
+    try {
+      const res = await api.fetchReaVlmModels(reaVlmBaseUrl.trim(), reaVlmApiKey.trim());
+      if (!res.ok || res.models.length === 0) {
+        notify(res.error || 'Không tìm thấy model nào từ endpoint này', 'err');
+        return;
+      }
+      setVlmFetchedModels(res.models);
+      setVlmRecommendedModels(res.recommended || []);
+      if (res.base_url) setReaVlmBaseUrl(res.base_url);
+      setReaVlmEnabled('1');
+      const preferred = (res.recommended && res.recommended[0]) || res.models[0];
+      const currentList = reaVlmModel
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const hasMatch = currentList.some((m) => res.models.includes(m));
+      if (!hasMatch && preferred) {
+        setReaVlmModel(preferred);
+      }
+      notify(`Đã tải thành công ${res.count} models từ endpoint! Hãy chọn model và bấm Lưu Cấu Hình.`);
+    } catch (err: unknown) {
+      notify(err instanceof Error ? err.message : 'Lỗi kết nối API để fetch model', 'err');
+    } finally {
+      setVlmFetchingModels(false);
+    }
+  };
+
   const handleBatchCrawl = async (e: React.FormEvent) => {
     e.preventDefault();
     if (basketLines.length === 0) {
@@ -657,26 +1482,32 @@ export default function App() {
     setScanStage('scanning');
     let totalNew = 0;
     const allNotes: string[] = [];
-    const apiEngine = crawlEngine === 'treg_api' ? 'treg_api' : 'crawl4ai_free';
+    const apiEngine = crawlEngine === 'treg_api' ? 'treg_api' : 'agent_reach';
 
     try {
       for (let i = 0; i < basketLines.length; i++) {
-        const kw = matchType === 'exact' ? basketLines[i] : basketLines[i].replace(/"/g, '');
+        const kw = basketLines[i].replace(/^["“']+|["”']+$/g, '').trim();
+        if (!kw) continue;
         if (i > 0) setScanStage('digging');
         const res = await api.crawlVideos({
           keyword: kw,
           platform: crawlPlatform,
           engine: apiEngine,
           country: marketCountry,
+          match_type: matchType,
         });
         totalNew += res.count;
         if (res.diagnostics) allNotes.push(...res.diagnostics);
       }
       setScanStage('digging');
-      setCrawlNotes(allNotes.slice(0, 6));
+      setCrawlNotes(allNotes.slice(0, 10));
       await refreshAll();
       setScanStage('done');
-      notify(`Quét xong ${basketLines.length} từ khoá! Đã nạp ${totalNew} video vào kho SpyWinAds.`);
+      if (totalNew > 0) {
+        notify(`Quét xong ${basketLines.length} từ khoá! Đã nạp ${totalNew} video vào kho SpyWinAds.`);
+      } else {
+        notify(allNotes[0] || `Đã quét ${basketLines.length} từ khoá nhưng chưa tìm thấy video khớp.`, 'err');
+      }
     } catch (err: unknown) {
       setScanStage('idle');
       notify(err instanceof Error ? err.message : 'Lỗi khi quét từ khoá', 'err');
@@ -726,16 +1557,316 @@ export default function App() {
     setActiveTab('clone-muse');
   };
 
-  const handleLaunchClone = async () => {
-    if (!selectedVideo || !selectedProduct) {
-      notify('Vui lòng chọn video gốc và sản phẩm Affiliate', 'err');
+  const handleSearchMetaShops = async (e?: React.FormEvent, overrideQuery?: string) => {
+    if (e) e.preventDefault();
+    const q = (overrideQuery !== undefined ? overrideQuery : metaShopQuery).trim();
+    if (!q) {
+      notify('Vui lòng nhập từ khoá sản phẩm, tên Shop, domain hoặc link Fanpage để tìm trên Meta Ads', 'err');
+      return;
+    }
+    setMetaShopSearching(true);
+    notify(`Đang quét Meta Ad Library tìm các Shop đang bán "${q}" (FB / IG / Threads)...`);
+    try {
+      const res = await api.searchMetaShops({
+        query: q,
+        country: metaShopCountry,
+        platform: metaShopPlatform,
+        limit: 12,
+      });
+      setMetaTotalMarketAds(res.total_market_ads || 0);
+      const allSaved = await api.getMetaShops();
+      const mergedList = res.shops && res.shops.length > 0 ? res.shops : allSaved.shops;
+      setMetaShops(allSaved.shops.length >= (res.shops?.length || 0) ? allSaved.shops : mergedList);
+      if (res.shops && res.shops.length > 0) {
+        const top = res.shops[0];
+        setSelectedMetaShop(top);
+        setSelectedMetaShopProducts(top.preview_products || []);
+        notify(`Tìm thấy ${res.shops.length} Shop đang chạy quảng cáo "${q}" trên Meta Ads!`);
+      } else {
+        notify(`Chưa tìm thấy Shop nào đang chạy quảng cáo khớp "${q}".`, 'err');
+      }
+    } catch (err: unknown) {
+      notify(err instanceof Error ? err.message : 'Lỗi khi dò Shop trên Meta Ads', 'err');
+    } finally {
+      setMetaShopSearching(false);
+    }
+  };
+
+  const handleInspectMetaShopProducts = async (target: {
+    id?: number;
+    page_id?: string;
+    shop_name?: string;
+  }) => {
+    const key = String(target.id || target.page_id || target.shop_name || 'scan');
+    setScanningShopKey(key);
+    setDrawerVideoId(null);
+    setActiveTab('do-shop-meta');
+    notify(`Đang quét toàn bộ kệ Sản Phẩm & Video Ads của shop "${target.shop_name || target.page_id}" trên Meta Ads...`);
+    try {
+      const res = await api.scanMetaShopProducts({
+        shop_id: target.id,
+        page_id: target.page_id || '',
+        shop_query: target.shop_name || '',
+        country: metaShopCountry,
+        limit: 24,
+      });
+      setSelectedMetaShop(res.shop);
+      setSelectedMetaShopProducts(res.products || []);
+      const refreshed = await api.getMetaShops();
+      setMetaShops(refreshed.shops || []);
+      notify(`Đã bóc tách ${res.products.length} sản phẩm/mẫu quảng cáo đang bán của "${res.shop.shop_name}"!`);
+    } catch (err: unknown) {
+      notify(err instanceof Error ? err.message : 'Không quét được kệ sản phẩm của Shop này', 'err');
+    } finally {
+      setScanningShopKey(null);
+    }
+  };
+
+  const handleImportShopProductToVideos = async (prod: MetaShopProduct) => {
+    setImportingShopProdId(prod.id);
+    try {
+      const res = await api.importMetaShopProductVideo(prod.id);
+      if (res.ok) {
+        await refreshAll();
+        notify(`Đã nạp video sản phẩm "${prod.product_title.slice(0, 45)}" vào Kho Video!`);
+      }
+    } catch (err: unknown) {
+      notify(err instanceof Error ? err.message : 'Không thể lưu video sản phẩm này', 'err');
+    } finally {
+      setImportingShopProdId(null);
+    }
+  };
+
+  const handleQuickAddShopProductToAffiliate = (prod: MetaShopProduct, shopName: string) => {
+    const nextNum = String(products.length + 1).padStart(2, '0');
+    const urlTarget = prod.product_url || prod.shop_url;
+    const lowU = urlTarget.toLowerCase();
+    const pfName = lowU.includes('shopee')
+      ? 'Shopee'
+      : lowU.includes('tiktok')
+      ? 'TikTok Shop'
+      : lowU.includes('lazada')
+      ? 'Lazada'
+      : 'ClickBank';
+    setProdForm({
+      code: `SP${nextNum}`,
+      name: (prod.product_title || shopName).slice(0, 90),
+      platform_name: pfName,
+      price: prod.selling_price || 'Liên hệ',
+      original_price: prod.original_price || '',
+      affiliate_url: urlTarget,
+      image_url: prod.thumbnail_url || '',
+      comment_template: '',
+    });
+    setActiveTab('kho-san-pham');
+    notify(`Đã điền sẵn thông tin SP từ shop "${shopName}" vào form Kho Sản Phẩm!`);
+  };
+
+  const effectiveFlowModelId =
+    flowModelId === '__custom__' ? customFlowModelId.trim() || 'omni_1_2_flash_10s_portrait' : flowModelId;
+
+  const handleSyncFlowModels = async () => {
+    setSyncingFlowModels(true);
+    try {
+      const res = await api.syncFlowModels();
+      if (res.models && res.models.length > 0) {
+        setFlowModels(res.models);
+      }
+      notify(
+        res.new_discovered > 0
+          ? `Đã đồng bộ thành công ${res.count} model Flow (phát hiện ${res.new_discovered} model mới)!`
+          : `Đã cập nhật đầy đủ ${res.count} model mới nhất trên Google Flow (OmniFlash / Veo 3.1 / Nano Banana)!`
+      );
+    } catch (err: unknown) {
+      notify(err instanceof Error ? err.message : 'Lỗi đồng bộ danh sách model Google Flow', 'err');
+    } finally {
+      setSyncingFlowModels(false);
+    }
+  };
+
+  const handleReaAndGenerateFlowPrompt = async (forceReanalyze = false) => {
+    const vid = selectedVideo;
+    if (!vid) {
+      notify('Vui lòng chọn video viral gốc trước', 'err');
+      return;
+    }
+    try {
+      let shotsCount = vid.rea_breakdown?.shots_count || 0;
+      if (forceReanalyze || !vid.rea_breakdown || !vid.rea_breakdown.scene_units?.length) {
+        setReaBusyVideoId(vid.id);
+        notify(`Bước 1/2: Đang mổ xẻ 4-frame/shot & lập kế hoạch Cụm Cảnh bằng rea-video cho video #${vid.id}...`);
+        const reaRes = await api.decomposeVideoRea(vid.id);
+        shotsCount = reaRes.breakdown.shots_count;
+        await refreshAll();
+        setReaBusyVideoId(null);
+      }
+      setFlowGeneratingPrompt(true);
+      notify(
+        `Bước 2/2: Đang dựng Kế Hoạch Cụm Cảnh & Ảnh Thành Phần sạch từ rea-video cho model ${effectiveFlowModelId}...`
+      );
+      const res = await api.generateFlowPrompt({
+        video_id: vid.id,
+        clone_mode: flowCloneMode,
+        custom_hint: promptScript,
+        flow_model: effectiveFlowModelId,
+      });
+      setFlowVeoPrompt(res.veo_prompt);
+      if (res.scene_units && res.scene_units.length > 0) setFlowScenePlan(res.scene_units);
+      if (res.reference_frame_url) setFlowRefFrameUrl(res.reference_frame_url);
+      notify(
+        `Đã mổ xẻ ${shotsCount} shots → ${res.scene_units?.length || 1} Cụm Cảnh Google Flow (${effectiveFlowModelId})!`
+      );
+    } catch (err: unknown) {
+      notify(err instanceof Error ? err.message : 'Lỗi mổ xẻ rea-video & tạo Prompt Flow', 'err');
+    } finally {
+      setReaBusyVideoId(null);
+      setFlowGeneratingPrompt(false);
+    }
+  };
+
+  const handleGenerateFlowVeoPrompt = async (targetVidId?: number, modeOverride?: string) => {
+    const vidId = targetVidId ?? selectedVideo?.id;
+    if (!vidId) {
+      notify('Vui lòng chọn video viral gốc trước', 'err');
+      return;
+    }
+    setFlowGeneratingPrompt(true);
+    try {
+      const res = await api.generateFlowPrompt({
+        video_id: vidId,
+        clone_mode: modeOverride || flowCloneMode,
+        custom_hint: promptScript,
+        flow_model: effectiveFlowModelId,
+      });
+      setFlowVeoPrompt(res.veo_prompt);
+      if (res.scene_units && res.scene_units.length > 0) setFlowScenePlan(res.scene_units);
+      if (res.reference_frame_url) setFlowRefFrameUrl(res.reference_frame_url);
+      notify(
+        `Đã dựng Kế Hoạch ${res.scene_units?.length || 1} Cụm Cảnh 9:16 (${effectiveFlowModelId}) từ video #${vidId}!`
+      );
+    } catch (err: unknown) {
+      notify(err instanceof Error ? err.message : 'Lỗi tạo Prompt Flow', 'err');
+    } finally {
+      setFlowGeneratingPrompt(false);
+    }
+  };
+
+  const handleSelectForFlowClone = (v: ViralVideo) => {
+    setSelectedVideoId(v.id);
+    setPromptScript(v.hook_text || v.title);
+    setFlowRefFrameUrl(v.thumbnail_url || '');
+    setFlowScenePlan(v.rea_breakdown?.scene_units || []);
+    setDrawerVideoId(null);
+    setActiveTab('clone-flow');
+    void handleGenerateFlowVeoPrompt(v.id, flowCloneMode);
+  };
+
+  const handleFlowBrowserLogin = async (accountId?: number) => {
+    try {
+      const res = await api.loginFlowBrowser({
+        account_id: accountId,
+        label: flowLoginLabel.trim(),
+        proxy: flowLoginProxy.trim(),
+        tier: flowBulkTier,
+      });
+      notify(res.message);
+      setFlowLoginLabel('');
+      await refreshAll();
+    } catch (err: unknown) {
+      notify(err instanceof Error ? err.message : 'Lỗi mở Chrome đăng nhập Google Flow', 'err');
+    }
+  };
+
+  const handleFlowOpenBrowser = async (accountId: number) => {
+    setFlowBusyAccId(accountId);
+    try {
+      const res = await api.openFlowBrowser(accountId);
+      notify(res.message);
+    } catch (err: unknown) {
+      notify(err instanceof Error ? err.message : 'Lỗi mở trình duyệt Flow', 'err');
+    } finally {
+      setFlowBusyAccId(null);
+    }
+  };
+
+  const handleFlowVerify = async (accountId: number) => {
+    setFlowBusyAccId(accountId);
+    try {
+      const res = await api.verifyFlowAccount(accountId);
+      setFlowAccounts((prev) => prev.map((a) => (a.id === accountId ? res.account : a)));
+      notify(res.message, res.ok ? 'ok' : 'err');
+    } catch (err: unknown) {
+      notify(err instanceof Error ? err.message : 'Lỗi kiểm tra tài khoản Flow', 'err');
+    } finally {
+      setFlowBusyAccId(null);
+    }
+  };
+
+  const handleFlowBulkImport = async () => {
+    if (!flowBulkText.trim()) {
+      notify('Vui lòng dán Cookie JSON / Cookie chuỗi / Bearer Token / Gemini Veo Key', 'err');
+      return;
+    }
+    try {
+      const res = await api.bulkImportFlowAccounts(flowBulkText, flowBulkLimit, flowBulkTier);
+      notify(`Đã nạp thành công ${res.imported} tài khoản Google Flow!`);
+      setFlowBulkText('');
+      setShowFlowImportModal(false);
+      await refreshAll();
+    } catch (err: unknown) {
+      notify(err instanceof Error ? err.message : 'Lỗi nhập tài khoản Flow', 'err');
+    }
+  };
+
+  const handleLaunchFlowClone = async () => {
+    if (!selectedVideo) {
+      notify('Vui lòng chọn video viral gốc cần clone bằng Google Flow', 'err');
+      return;
+    }
+    if (flowModelId === '__custom__' && !customFlowModelId.trim()) {
+      notify('Vui lòng nhập mã Model Google Flow / Gemini tuỳ chỉnh trước khi chạy', 'err');
+      return;
+    }
+    if (flowAccounts.filter((a) => a.status === 'active').length === 0) {
+      notify('Chưa có tài khoản Google Flow nào Active! Hãy bấm Đăng nhập Chrome hoặc Nhập Cookie/Key trước.', 'err');
       return;
     }
     setIsLaunchingClone(true);
     try {
       const res = await api.createCloneJob({
         source_video_id: selectedVideo.id,
-        product_id: selectedProduct.id,
+        product_id: selectedProductId || 0,
+        clone_mode: flowCloneMode,
+        prompt_script: promptScript || selectedVideo.hook_text || selectedVideo.title,
+        cta_position: ctaPosition,
+        link_placement_mode: linkPlacementMode,
+        anti_duplicate: antiDuplicate,
+        batch_count: batchCount,
+        flow_account_id: selectedFlowAccountId > 0 ? selectedFlowAccountId : null,
+        flow_model: effectiveFlowModelId,
+        veo_prompt: flowVeoPrompt.trim(),
+        scene_plan: flowScenePlan.length > 0 ? flowScenePlan : undefined,
+      });
+      if (res.jobs[0]) setActiveFlowJobId(res.jobs[0].id);
+      notify(`Đã gửi ${res.jobs.length} tiến trình Clone (${effectiveFlowModelId}) sang Google Flow!`);
+      await refreshAll();
+    } catch (err: unknown) {
+      notify(err instanceof Error ? err.message : 'Lỗi khởi tạo job Google Flow', 'err');
+    } finally {
+      setIsLaunchingClone(false);
+    }
+  };
+
+  const handleLaunchClone = async () => {
+    if (!selectedVideo) {
+      notify('Vui lòng chọn video viral gốc cần remake', 'err');
+      return;
+    }
+    setIsLaunchingClone(true);
+    try {
+      const res = await api.createCloneJob({
+        source_video_id: selectedVideo.id,
+        product_id: selectedProductId || 0,
         clone_mode: cloneMode,
         prompt_script: promptScript || selectedVideo.hook_text || selectedVideo.title,
         cta_position: ctaPosition,
@@ -744,10 +1875,10 @@ export default function App() {
         batch_count: batchCount,
       });
       if (res.jobs[0]) setActiveCloneJobId(res.jobs[0].id);
-      notify(`Đã đưa ${res.jobs.length} video vào hàng đợi Muse AI + FFmpeg 9:16!`);
+      notify(`Đã đưa ${res.jobs.length} video vào hàng đợi Remake Organic 9:16!`);
       await refreshAll();
     } catch (err: unknown) {
-      notify(err instanceof Error ? err.message : 'Lỗi tạo job clone', 'err');
+      notify(err instanceof Error ? err.message : 'Lỗi tạo job remake', 'err');
     } finally {
       setIsLaunchingClone(false);
     }
@@ -893,17 +2024,38 @@ export default function App() {
               }}
             />
           </div>
-          <div
-            className="hidden lg:flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium shrink-0"
+          <button
+            type="button"
+            onClick={() => setActiveTab('cai-dat')}
+            className="hidden lg:flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium shrink-0 cursor-pointer hover:opacity-85 transition"
             style={{ background: 'var(--la-bg)', color: 'var(--la)' }}
+            title="Mở Cài đặt Agent-Reach & rea-video"
           >
             <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: 'var(--la)' }} />
-            Crawl4AI + yt-dlp · Mạng nhà
-          </div>
+            Agent-Reach + rea-video + yt-dlp · Mạng nhà
+          </button>
         </div>
 
-        {/* Right: Muse Pool Pill + /bio + Theme Switcher */}
+        {/* Right: Flow Pool + Muse Pool Pill + /bio + Settings + Theme Switcher */}
         <div className="flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={() => setActiveTab('clone-flow')}
+            className="hidden md:flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-semibold border transition"
+            style={{
+              background: 'var(--la-bg)',
+              color: 'var(--la)',
+              borderColor: 'transparent',
+            }}
+            title="Clone Video bằng tài khoản Google Flow (flow.google.com — Veo 3.1)"
+          >
+            <Film className="w-3.5 h-3.5" />
+            <span>Google Flow</span>
+            <span style={{ opacity: 0.8 }}>
+              ({flowAccounts.filter((a) => a.status === 'active').length}/{flowAccounts.length} acc)
+            </span>
+          </button>
+
           <button
             onClick={() => setActiveTab('clone-muse')}
             className="hidden md:flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-semibold border transition"
@@ -933,6 +2085,21 @@ export default function App() {
             <span>/bio</span>
             <ExternalLink className="w-3 h-3" />
           </a>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('cai-dat')}
+            className="flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-semibold border transition"
+            style={{
+              background: activeTab === 'cai-dat' ? 'var(--xanh)' : 'var(--xam)',
+              borderColor: activeTab === 'cai-dat' ? 'transparent' : 'var(--vien-nhe)',
+              color: activeTab === 'cai-dat' ? '#ffffff' : 'var(--chu)',
+            }}
+            title="Mở Cài đặt & Login Agent-Reach, rea-video VLM"
+          >
+            <Settings className="w-3.5 h-3.5" />
+            <span>Cài đặt &amp; Agent-Reach</span>
+          </button>
 
           <div className="sw-seg" title="Giao diện Sáng / Tối">
             <button
@@ -970,7 +2137,7 @@ export default function App() {
       <div className="flex-1 flex min-h-0">
         {/* LEFT SIDEBAR (Exact SpyWinAds Hierarchy) */}
         <aside
-          className="w-[244px] shrink-0 border-r flex flex-col justify-between p-3 overflow-y-auto"
+          className="w-[244px] shrink-0 border-r flex flex-col justify-between p-3 overflow-y-auto sticky top-12 h-[calc(100vh-3rem)]"
           style={{
             background: 'var(--nen)',
             borderColor: 'var(--vien-nhe)',
@@ -992,6 +2159,12 @@ export default function App() {
                     label: 'Quét từ khoá',
                     icon: Search,
                     badge: basketLines.length > 0 ? `${basketLines.length} KW` : undefined,
+                  },
+                  {
+                    id: 'do-shop-meta' as SidebarTab,
+                    label: 'Dò Shop & SP (Meta)',
+                    icon: ShoppingBag,
+                    badge: metaShops.length > 0 ? `${metaShops.length} shop` : '3 kênh',
                   },
                   {
                     id: 'dao-sau' as SidebarTab,
@@ -1143,6 +2316,12 @@ export default function App() {
                     badge: tabCounts['video-test'],
                   },
                   {
+                    id: 'clone-flow' as SidebarTab,
+                    label: 'Clone Google Flow',
+                    icon: Film,
+                    badge: `${flowAccounts.filter((a) => a.status === 'active').length} acc`,
+                  },
+                  {
                     id: 'clone-muse' as SidebarTab,
                     label: 'Clone Video (Muse AI)',
                     icon: Sparkles,
@@ -1159,6 +2338,12 @@ export default function App() {
                     label: 'Đăng Bài & Auto-Link',
                     icon: Send,
                     badge: publishTasks.length,
+                  },
+                  {
+                    id: 'cai-dat' as SidebarTab,
+                    label: 'Cài đặt & Agent-Reach',
+                    icon: Settings,
+                    badge: arStatus?.channels?.length ? `${arStatus.channels.length} kênh` : '14 kênh',
                   },
                 ].map((item) => {
                   const Icon = item.icon;
@@ -1196,13 +2381,30 @@ export default function App() {
 
           {/* Sidebar Footer */}
           <div className="pt-4 mt-4 border-t space-y-2" style={{ borderColor: 'var(--vien-nhe)' }}>
-            <div className="sw-card-subtle p-2.5 space-y-1.5 text-[11px]">
+            <button
+              type="button"
+              onClick={() => setActiveTab('cai-dat')}
+              className="sw-card-subtle w-full text-left p-2.5 space-y-1.5 text-[11px] hover:opacity-90 transition cursor-pointer"
+              title="Bấm để mở Cài đặt Agent-Reach & rea-video"
+            >
               <div className="flex items-center justify-between font-semibold">
                 <span className="flex items-center gap-1.5" style={{ color: 'var(--la)' }}>
                   <span className="w-2 h-2 rounded-full" style={{ background: 'var(--la)' }} />
                   Đang hoạt động
                 </span>
                 <span style={{ color: 'var(--mo)' }}>Mạng nhà</span>
+              </div>
+              <div className="flex items-center justify-between" style={{ color: 'var(--mo)' }}>
+                <span>Agent-Reach</span>
+                <span style={{ color: status?.agent_reach_installed ? 'var(--la)' : 'var(--cam)', fontWeight: 600 }}>
+                  {status?.agent_reach_installed ? 'Sẵn sàng' : 'Chưa cài'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between" style={{ color: 'var(--mo)' }}>
+                <span>rea-video</span>
+                <span style={{ color: status?.rea_video_installed ? 'var(--la)' : 'var(--cam)', fontWeight: 600 }}>
+                  {status?.rea_video_installed ? 'Sẵn sàng' : 'Chưa cài'}
+                </span>
               </div>
               <div className="flex items-center justify-between" style={{ color: 'var(--mo)' }}>
                 <span>FFmpeg 9:16</span>
@@ -1216,19 +2418,21 @@ export default function App() {
                   {status?.ytdlp_installed ? 'Sẵn sàng' : 'Fallback'}
                 </span>
               </div>
-            </div>
+            </button>
 
             <button
+              type="button"
               onClick={() => setActiveTab('cai-dat')}
-              className="w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-medium transition"
+              className="w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-semibold border transition"
               style={{
-                background: activeTab === 'cai-dat' ? 'var(--o)' : 'transparent',
-                color: activeTab === 'cai-dat' ? 'var(--chu)' : 'var(--mo)',
+                background: activeTab === 'cai-dat' ? 'var(--xanh)' : 'var(--xam)',
+                borderColor: activeTab === 'cai-dat' ? 'transparent' : 'var(--vien-nhe)',
+                color: activeTab === 'cai-dat' ? '#ffffff' : 'var(--chu)',
               }}
             >
               <span className="flex items-center gap-2">
                 <Settings className="w-3.5 h-3.5" />
-                <span>Cài đặt API (treg.to) & Rust</span>
+                <span>Cài đặt Agent-Reach &amp; rea-video</span>
               </span>
               <span className="text-[10px] font-semibold">VI</span>
             </button>
@@ -1359,15 +2563,29 @@ export default function App() {
                             className="flex items-center justify-between gap-3 p-2.5 rounded-2xl border"
                             style={{ background: 'var(--xam)', borderColor: 'var(--vien-nhe)' }}
                           >
-                            <div className="flex items-center gap-3 min-w-0">
-                              <img
-                                src={
-                                  item.raw.thumbnail_url ||
-                                  'https://images.unsplash.com/photo-1611162617474-5b21e879e113?auto=format&fit=crop&w=200&q=80'
-                                }
-                                alt={item.raw.title}
-                                className="w-11 h-14 rounded-xl object-cover shrink-0 bg-black"
-                              />
+                            <div
+                              onClick={() => setDrawerVideoId(item.raw.id)}
+                              className="flex items-center gap-3 min-w-0 cursor-pointer"
+                            >
+                              {item.localMediaUrl ? (
+                                <video
+                                  src={item.localMediaUrl}
+                                  poster={item.raw.thumbnail_url || undefined}
+                                  muted
+                                  preload="metadata"
+                                  playsInline
+                                  className="w-11 h-14 rounded-xl object-cover shrink-0 bg-black"
+                                />
+                              ) : (
+                                <img
+                                  src={
+                                    item.raw.thumbnail_url ||
+                                    'https://images.unsplash.com/photo-1611162617474-5b21e879e113?auto=format&fit=crop&w=200&q=80'
+                                  }
+                                  alt={item.raw.title}
+                                  className="w-11 h-14 rounded-xl object-cover shrink-0 bg-black"
+                                />
+                              )}
                               <div className="min-w-0">
                                 <div className="text-xs font-semibold truncate" style={{ color: 'var(--chu)' }}>
                                   {item.raw.title}
@@ -1384,10 +2602,11 @@ export default function App() {
                             <div className="flex items-center gap-1.5 shrink-0">
                               <button
                                 onClick={() => setDrawerVideoId(item.raw.id)}
-                                className="sw-pill-btn px-2.5 py-1 text-[11px] border"
-                                style={{ background: 'var(--nen)', borderColor: 'var(--vien)', color: 'var(--chu)' }}
+                                className="sw-pill-btn px-2.5 py-1 text-[11px] border flex items-center gap-1 font-semibold"
+                                style={{ background: 'var(--xanh-bg)', borderColor: 'transparent', color: 'var(--link)' }}
                               >
-                                Phân tích
+                                <Play className="w-3 h-3 fill-current" />
+                                Xem &amp; Phân tích
                               </button>
                               <button
                                 onClick={() => handleSelectForClone(item.raw)}
@@ -1477,18 +2696,26 @@ export default function App() {
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div>
                           <label className="block text-[11px] font-semibold mb-1.5" style={{ color: 'var(--mo)' }}>
-                            Nền tảng nguồn
+                            Nền tảng nguồn (Trọng tâm Hệ Meta)
                           </label>
                           <select
                             value={crawlPlatform}
                             onChange={(e) => setCrawlPlatform(e.target.value)}
                             className="sw-input w-full px-3 py-2 text-xs font-medium"
                           >
-                            <option value="all">Tất cả (Meta Ads + IG + FB + Threads)</option>
-                            <option value="meta_ads">Meta Ads Library (Free)</option>
-                            <option value="instagram">Instagram Reels</option>
-                            <option value="facebook">Facebook Reels / Watch</option>
-                            <option value="threads">Threads Video Posts</option>
+                            <optgroup label="Trọng tâm: Hệ Meta (Miễn phí · Tự lấy Link Shop/SP & Giá)">
+                              <option value="all">Tất cả 3 kênh Meta (Facebook + Instagram + Threads Ads)</option>
+                              <option value="facebook">Facebook Video Ads &amp; Reels (Meta Library)</option>
+                              <option value="instagram">Instagram Video Ads &amp; Reels (Meta Library + Session)</option>
+                              <option value="threads">Threads Video Ads &amp; Posts (Meta Library)</option>
+                              <option value="meta_ads">Meta Ads Library (Tổng hợp mọi vị trí)</option>
+                            </optgroup>
+                            <optgroup label="Mở rộng sau (Thử nghiệm)">
+                              <option value="tiktok">TikTok Viral (Agent-Reach Web)</option>
+                              <option value="youtube">YouTube &amp; Shorts (Agent-Reach)</option>
+                              <option value="xiaohongshu">Xiaohongshu / Tiểu Hồng Thư (Agent-Reach)</option>
+                              <option value="bilibili">Bilibili / B站 (Agent-Reach)</option>
+                            </optgroup>
                           </select>
                         </div>
 
@@ -1501,7 +2728,7 @@ export default function App() {
                             onChange={(e) => setCrawlEngine(e.target.value)}
                             className="sw-input w-full px-3 py-2 text-xs font-medium"
                           >
-                            <option value="crawl4ai_free">Auto Free: Crawl4AI + Playwright + yt-dlp</option>
+                            <option value="agent_reach">Agent-Reach Multi-Social + Playwright + yt-dlp</option>
                             <option value="treg_api">treg.to Meta Ads Connector (API Key)</option>
                           </select>
                         </div>
@@ -1574,17 +2801,17 @@ export default function App() {
                       <div className="flex items-center justify-between">
                         <h3 className="text-sm font-bold flex items-center gap-2" style={{ color: 'var(--chu)' }}>
                           <Link2 className="w-4 h-4" style={{ color: 'var(--link)' }} />
-                          Dán link trực tiếp (IG Reels / FB Reels / Threads)
+                          Dán link trực tiếp (Mọi nền tảng Social)
                         </h3>
                         <span className="text-[11px]" style={{ color: 'var(--mo)' }}>
-                          yt-dlp 1-Click MP4
+                          Agent-Reach + yt-dlp MP4
                         </span>
                       </div>
                       <div className="flex flex-col sm:flex-row gap-2">
                         <input
                           value={inspectUrlInput}
                           onChange={(e) => setInspectUrlInput(e.target.value)}
-                          placeholder="https://www.instagram.com/reel/... hoặc link Facebook/Threads..."
+                          placeholder="Dán link YouTube, Bilibili, Xiaohongshu, TikTok, IG, FB, X, Threads..."
                           className="sw-input flex-1 px-3.5 py-2 text-xs"
                         />
                         <button
@@ -1602,6 +2829,600 @@ export default function App() {
                         </button>
                       </div>
                     </form>
+
+                    {/* Agent-Reach Deep Action Explorer */}
+                    <form onSubmit={handleAgentReachExecute} className="sw-card p-5 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-sm font-bold flex items-center gap-2" style={{ color: 'var(--chu)' }}>
+                          <Globe className="w-4 h-4" style={{ color: 'var(--la)' }} />
+                          Trình Quét Sâu Agent-Reach (Hot Trend / Profile / Phụ đề / Bình luận)
+                        </h3>
+                        <button
+                          type="button"
+                          onClick={() => setActiveTab('cai-dat')}
+                          className="text-[11px] font-semibold hover:underline"
+                          style={{ color: 'var(--link)' }}
+                        >
+                          Login tài khoản →
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
+                        <select
+                          value={arExecChannel}
+                          onChange={(e) => setArExecChannel(e.target.value)}
+                          className="sw-input sm:col-span-4 px-3 py-2 text-xs font-medium"
+                        >
+                          <option value="youtube">YouTube</option>
+                          <option value="xiaohongshu">Xiaohongshu (XHS)</option>
+                          <option value="bilibili">Bilibili</option>
+                          <option value="instagram">Instagram</option>
+                          <option value="facebook">Facebook</option>
+                          <option value="twitter">X / Twitter</option>
+                          <option value="reddit">Reddit</option>
+                          <option value="v2ex">V2EX</option>
+                          <option value="web">Web (TikTok/Douyin/Threads)</option>
+                        </select>
+                        <select
+                          value={arExecAction}
+                          onChange={(e) => setArExecAction(e.target.value)}
+                          className="sw-input sm:col-span-3 px-3 py-2 text-xs font-medium"
+                        >
+                          <option value="search">search (Tìm kiếm)</option>
+                          <option value="hot">hot (Đang thịnh hành)</option>
+                          <option value="posts">posts (Bài của User)</option>
+                          <option value="tweets">tweets (Tweet của User)</option>
+                          <option value="profile">profile (Thông tin kênh)</option>
+                          <option value="subtitle">subtitle (Lấy phụ đề)</option>
+                          <option value="comments">comments (Đọc bình luận)</option>
+                          <option value="subreddit">subreddit (Nhóm Reddit)</option>
+                          <option value="read">read (Đọc chi tiết URL)</option>
+                        </select>
+                        <input
+                          value={arExecQuery}
+                          onChange={(e) => setArExecQuery(e.target.value)}
+                          placeholder="Từ khoá, @username hoặc URL..."
+                          className="sw-input sm:col-span-5 px-3 py-2 text-xs"
+                        />
+                      </div>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[11px]" style={{ color: 'var(--mo2)' }}>
+                          Hỗ trợ lấy video, phụ đề & bình luận trực tiếp bằng phiên đã đăng nhập trong Agent-Reach.
+                        </span>
+                        <button
+                          type="submit"
+                          disabled={arExecRunning}
+                          className="sw-pill-btn-primary px-4 py-2 text-xs flex items-center gap-1.5 shrink-0"
+                        >
+                          {arExecRunning ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Terminal className="w-3.5 h-3.5" />}
+                          {arExecRunning ? 'Đang chạy...' : 'Chạy Agent-Reach & Lưu Video'}
+                        </button>
+                      </div>
+                      {arExecResult && (
+                        <pre
+                          className="p-3 rounded-xl text-[11px] overflow-x-auto max-h-40 whitespace-pre-wrap"
+                          style={{ background: 'var(--xam)', color: 'var(--mo)' }}
+                        >
+                          {arExecResult}
+                        </pre>
+                      )}
+                    </form>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ==============================================================
+                VIEW 1B: DÒ SHOP & SẢN PHẨM ĐANG BÁN (META ADS -> FB / IG / THREADS)
+               ============================================================== */}
+            {activeTab === 'do-shop-meta' && (
+              <div className="space-y-5">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h1 className="text-2xl font-bold tracking-tight" style={{ color: 'var(--chu)' }}>
+                      Dò Shop &amp; Sản Phẩm Đang Bán (Meta Ads)
+                    </h1>
+                    <p className="text-xs mt-1" style={{ color: 'var(--mo)' }}>
+                      Nguồn công khai miễn phí 100% từ Meta Ad Library · Tự động liên kết Video Ads trên{' '}
+                      <strong style={{ color: 'var(--chu)' }}>Facebook · Instagram · Threads</strong> và bóc tách đồng thời{' '}
+                      <strong style={{ color: 'var(--la)' }}>Link Shop + Link Sản Phẩm + Giá Đang Bán</strong>.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 text-xs">
+                    <span
+                      className="px-3 py-1 rounded-full font-semibold"
+                      style={{ background: 'var(--la-bg)', color: 'var(--la)' }}
+                    >
+                      Meta Ads GraphQL · Free 100%
+                    </span>
+                    {metaTotalMarketAds > 0 && (
+                      <span
+                        className="px-3 py-1 rounded-full font-semibold"
+                        style={{ background: 'var(--xanh-bg)', color: 'var(--link)' }}
+                      >
+                        ~{formatCompact(metaTotalMarketAds)} QC toàn thị trường
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Search Bar Card */}
+                <form onSubmit={(e) => handleSearchMetaShops(e)} className="sw-card p-5 space-y-3.5">
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
+                    <div className="lg:col-span-6">
+                      <label className="block text-[11px] font-semibold mb-1" style={{ color: 'var(--mo)' }}>
+                        Từ khoá sản phẩm / Tên Shop / Domain / Link Fanpage Facebook
+                      </label>
+                      <input
+                        value={metaShopQuery}
+                        onChange={(e) => setMetaShopQuery(e.target.value)}
+                        placeholder="VD: dây chuyền bạc, máy ép chậm, Wander Prints, shopee.vn/..., hoặc link Fanpage..."
+                        className="sw-input w-full px-3.5 py-2.5 text-xs"
+                      />
+                    </div>
+                    <div className="lg:col-span-2">
+                      <label className="block text-[11px] font-semibold mb-1" style={{ color: 'var(--mo)' }}>
+                        Thị trường
+                      </label>
+                      <select
+                        value={metaShopCountry}
+                        onChange={(e) => setMetaShopCountry(e.target.value as 'VN' | 'US' | 'ALL')}
+                        className="sw-input w-full px-3 py-2.5 text-xs font-medium"
+                      >
+                        <option value="VN">VN · Việt Nam</option>
+                        <option value="US">US · Mỹ / Global</option>
+                        <option value="ALL">ALL · Toàn cầu</option>
+                      </select>
+                    </div>
+                    <div className="lg:col-span-2">
+                      <label className="block text-[11px] font-semibold mb-1" style={{ color: 'var(--mo)' }}>
+                        Nền tảng liên kết
+                      </label>
+                      <select
+                        value={metaShopPlatform}
+                        onChange={(e) => setMetaShopPlatform(e.target.value as 'all' | 'facebook' | 'instagram' | 'threads')}
+                        className="sw-input w-full px-3 py-2.5 text-xs font-medium"
+                      >
+                        <option value="all">Cả 3 (FB + IG + Threads)</option>
+                        <option value="facebook">Facebook Ads</option>
+                        <option value="instagram">Instagram Ads</option>
+                        <option value="threads">Threads Ads</option>
+                      </select>
+                    </div>
+                    <div className="lg:col-span-2 flex items-end">
+                      <button
+                        type="submit"
+                        disabled={metaShopSearching}
+                        className="sw-pill-btn-primary w-full py-2.5 px-4 text-xs font-semibold flex items-center justify-center gap-1.5"
+                      >
+                        {metaShopSearching ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
+                        {metaShopSearching ? 'Đang dò...' : 'Tìm Shop & SP'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Quick Niche Chips */}
+                  <div className="flex flex-wrap items-center gap-1.5 pt-0.5 text-[11px]">
+                    <span style={{ color: 'var(--mo2)' }}>Gợi ý dò nhanh:</span>
+                    {[
+                      'dây chuyền bạc',
+                      'máy ép chậm mini',
+                      'kem chống nắng',
+                      'đèn ngủ decor',
+                      'bàn chải điện',
+                      'ergonomic chair',
+                    ].map((kw) => (
+                      <button
+                        key={kw}
+                        type="button"
+                        onClick={() => {
+                          setMetaShopQuery(kw);
+                          handleSearchMetaShops(undefined, kw);
+                        }}
+                        className="px-2.5 py-1 rounded-full border transition hover:opacity-85"
+                        style={{ background: 'var(--xam)', borderColor: 'var(--vien-nhe)', color: 'var(--chu)' }}
+                      >
+                        {kw}
+                      </button>
+                    ))}
+                  </div>
+                </form>
+
+                {/* 2-Column Master-Detail: Left = Discovered Shops | Right = Active Products & Video Ads of Selected Shop */}
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+                  {/* LEFT: Discovered Meta Ads Shops */}
+                  <div className="lg:col-span-5 sw-card p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h2 className="text-sm font-bold flex items-center gap-2" style={{ color: 'var(--chu)' }}>
+                        <ShoppingBag className="w-4 h-4" style={{ color: 'var(--link)' }} />
+                        Danh sách Shop trên Meta Ads ({metaShops.length})
+                      </h2>
+                      <span className="text-[11px]" style={{ color: 'var(--mo2)' }}>
+                        Bấm chọn Shop để xem kệ SP
+                      </span>
+                    </div>
+
+                    {metaShops.length === 0 ? (
+                      <div className="py-12 text-center text-xs space-y-2" style={{ color: 'var(--mo)' }}>
+                        <p className="font-semibold" style={{ color: 'var(--chu)' }}>
+                          Chưa có Shop nào được lưu trong phiên này.
+                        </p>
+                        <p>Nhập từ khoá ngách hoặc tên thương hiệu ở trên rồi bấm &ldquo;Tìm Shop &amp; SP&rdquo; nhé!</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-2.5 max-h-[680px] overflow-y-auto pr-1">
+                        {metaShops.map((sh) => {
+                          const isSelected = selectedMetaShop?.id === sh.id;
+                          const isScanningThis =
+                            scanningShopKey === String(sh.id) || (sh.page_id && scanningShopKey === sh.page_id);
+                          return (
+                            <div
+                              key={sh.id}
+                              onClick={async () => {
+                                setSelectedMetaShop(sh);
+                                try {
+                                  const det = await api.getMetaShopDetail(sh.id);
+                                  setSelectedMetaShop(det.shop);
+                                  setSelectedMetaShopProducts(det.products || []);
+                                } catch {
+                                  setSelectedMetaShopProducts(sh.preview_products || []);
+                                }
+                              }}
+                              className="p-3.5 rounded-2xl border cursor-pointer transition space-y-2"
+                              style={{
+                                background: isSelected ? 'var(--xanh-bg)' : 'var(--xam)',
+                                borderColor: isSelected ? 'var(--xanh)' : 'var(--vien-nhe)',
+                              }}
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0">
+                                  <div className="font-bold text-xs truncate flex items-center gap-1.5" style={{ color: 'var(--chu)' }}>
+                                    <span>{sh.shop_name}</span>
+                                    {sh.is_inbox_only && (
+                                      <span
+                                        className="px-1.5 py-0.5 rounded text-[9px] font-semibold"
+                                        style={{ background: 'var(--cam-bg)', color: 'var(--cam)' }}
+                                      >
+                                        Bán qua Inbox
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="text-[11px] truncate mt-0.5" style={{ color: 'var(--mo)' }}>
+                                    {sh.domain || (sh.page_id ? `Page ID: ${sh.page_id}` : 'Meta Advertiser')}
+                                    {sh.ig_handle ? ` · @${sh.ig_handle}` : ''}
+                                  </div>
+                                </div>
+                                <span
+                                  className="px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0"
+                                  style={{ background: 'var(--nen)', color: 'var(--link)' }}
+                                >
+                                  {sh.active_ads_count} QC active
+                                </span>
+                              </div>
+
+                              {/* Price + 3-Platform Badges */}
+                              <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                                <div className="flex items-center gap-1.5">
+                                  <span
+                                    className="font-bold"
+                                    style={{ color: sh.price_range ? 'var(--la)' : 'var(--mo2)' }}
+                                  >
+                                    {sh.price_range || 'Xem giá từng SP'}
+                                  </span>
+                                  <span style={{ color: 'var(--mo2)' }}>· {sh.products_count || 0} SP</span>
+                                </div>
+                                <div className="flex items-center gap-1">
+                                  {(sh.placements || ['facebook']).map((pl) => (
+                                    <span
+                                      key={pl}
+                                      className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
+                                      style={{ background: 'var(--nen)', color: 'var(--chu)' }}
+                                    >
+                                      {pl === 'facebook' ? 'FB' : pl === 'instagram' ? 'IG' : pl === 'threads' ? 'Threads' : pl}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+
+                              {/* Quick Links & Deep Product Catalog Scan */}
+                              <div className="flex flex-wrap items-center justify-between gap-1.5 pt-1" onClick={(e) => e.stopPropagation()}>
+                                <div className="flex items-center gap-1.5">
+                                  {sh.shop_url && (
+                                    <a
+                                      href={sh.shop_url}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="px-2 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1 hover:opacity-90"
+                                      style={{ background: 'var(--la-bg)', color: 'var(--la)' }}
+                                      title={sh.shop_url}
+                                    >
+                                      <ShoppingBag className="w-3 h-3" />
+                                      Link Shop
+                                      <ExternalLink className="w-2.5 h-2.5" />
+                                    </a>
+                                  )}
+                                  {sh.ad_library_url && (
+                                    <a
+                                      href={sh.ad_library_url}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="px-2 py-1 rounded-lg text-[10px] font-semibold border flex items-center gap-1"
+                                      style={{ background: 'var(--nen)', borderColor: 'var(--vien-nhe)', color: 'var(--mo)' }}
+                                    >
+                                      Ad Library
+                                      <ExternalLink className="w-2.5 h-2.5" />
+                                    </a>
+                                  )}
+                                </div>
+
+                                <button
+                                  type="button"
+                                  disabled={Boolean(isScanningThis)}
+                                  onClick={() =>
+                                    handleInspectMetaShopProducts({
+                                      id: sh.id,
+                                      page_id: sh.page_id,
+                                      shop_name: sh.shop_name,
+                                    })
+                                  }
+                                  className="px-2.5 py-1 rounded-lg text-[10px] font-bold border flex items-center gap-1"
+                                  style={{ background: 'var(--nen)', borderColor: 'var(--vien)', color: 'var(--link)' }}
+                                >
+                                  <RefreshCw className={`w-2.5 h-2.5 ${isScanningThis ? 'animate-spin' : ''}`} />
+                                  {isScanningThis ? 'Đang quét kệ SP...' : 'Quét toàn bộ SP của Shop'}
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* RIGHT: Selected Shop's Advertised Products & Video Creatives */}
+                  <div className="lg:col-span-7 sw-card p-5 space-y-4">
+                    {selectedMetaShop ? (
+                      <>
+                        <div className="flex flex-wrap items-start justify-between gap-3 pb-3 border-b" style={{ borderColor: 'var(--vien-nhe)' }}>
+                          <div className="space-y-1 min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h2 className="text-base font-bold" style={{ color: 'var(--chu)' }}>
+                                Kệ Sản Phẩm Đang Bán: {selectedMetaShop.shop_name}
+                              </h2>
+                              <span
+                                className="px-2.5 py-0.5 rounded-full text-[11px] font-bold"
+                                style={{ background: 'var(--xanh-bg)', color: 'var(--link)' }}
+                              >
+                                {selectedMetaShopProducts.length} sản phẩm/mẫu Ads
+                              </span>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2 text-xs" style={{ color: 'var(--mo)' }}>
+                              {selectedMetaShop.shop_url && (
+                                <a
+                                  href={selectedMetaShop.shop_url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="font-semibold hover:underline flex items-center gap-1"
+                                  style={{ color: 'var(--la)' }}
+                                >
+                                  <ShoppingBag className="w-3.5 h-3.5" />
+                                  Link Shop: {selectedMetaShop.domain || selectedMetaShop.shop_url.slice(0, 42)}
+                                  <ExternalLink className="w-3 h-3" />
+                                </a>
+                              )}
+                              {selectedMetaShop.page_url && (
+                                <a
+                                  href={selectedMetaShop.page_url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="hover:underline flex items-center gap-1"
+                                  style={{ color: 'var(--link)' }}
+                                >
+                                  Fanpage FB
+                                  <ExternalLink className="w-3 h-3" />
+                                </a>
+                              )}
+                              {selectedMetaShop.ig_handle && (
+                                <a
+                                  href={`https://www.instagram.com/${selectedMetaShop.ig_handle}/`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="hover:underline flex items-center gap-1"
+                                  style={{ color: '#b91c6e' }}
+                                >
+                                  IG @{selectedMetaShop.ig_handle}
+                                  <ExternalLink className="w-3 h-3" />
+                                </a>
+                              )}
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            disabled={scanningShopKey !== null}
+                            onClick={() =>
+                              handleInspectMetaShopProducts({
+                                id: selectedMetaShop.id,
+                                page_id: selectedMetaShop.page_id,
+                                shop_name: selectedMetaShop.shop_name,
+                              })
+                            }
+                            className="sw-pill-btn-primary px-3.5 py-2 text-xs font-semibold flex items-center gap-1.5 shrink-0"
+                          >
+                            <RefreshCw className={`w-3.5 h-3.5 ${scanningShopKey !== null ? 'animate-spin' : ''}`} />
+                            Quét Sâu Toàn Bộ Kệ SP ({selectedMetaShop.active_ads_count} QC)
+                          </button>
+                        </div>
+
+                        {selectedMetaShopProducts.length === 0 ? (
+                          <div className="py-12 text-center text-xs space-y-2" style={{ color: 'var(--mo)' }}>
+                            <p>Chưa tải danh sách sản phẩm chi tiết cho shop này.</p>
+                            <p>Bấm nút &ldquo;Quét Sâu Toàn Bộ Kệ SP&rdquo; phía trên để mở toàn bộ sản phẩm đang chạy Ads của shop!</p>
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 max-h-[620px] overflow-y-auto pr-1">
+                            {selectedMetaShopProducts.map((prod) => (
+                              <div
+                                key={prod.id}
+                                className="p-3.5 rounded-2xl border flex flex-col justify-between gap-3"
+                                style={{ background: 'var(--xam)', borderColor: 'var(--vien-nhe)' }}
+                              >
+                                <div className="space-y-2.5">
+                                  {/* Top Row: Scale Count + Placements (FB / IG / Threads) */}
+                                  <div className="flex items-center justify-between gap-2 text-[10px]">
+                                    <span
+                                      className="px-2 py-0.5 rounded-full font-bold"
+                                      style={{ background: 'var(--xanh-bg)', color: 'var(--link)' }}
+                                    >
+                                      Scale {prod.ads_duplication_count} QC · {prod.video_age_days} ngày
+                                    </span>
+                                    <div className="flex items-center gap-1">
+                                      {(prod.placements || ['facebook']).map((pl) => (
+                                        <span
+                                          key={pl}
+                                          className="px-1.5 py-0.5 rounded font-bold uppercase"
+                                          style={{ background: 'var(--nen)', color: 'var(--chu)' }}
+                                        >
+                                          {pl === 'facebook' ? 'FB' : pl === 'instagram' ? 'IG' : pl === 'threads' ? 'Threads' : pl}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </div>
+
+                                  {/* Media Preview + Product Title + Selling Price */}
+                                  <div className="flex gap-3">
+                                    <div className="w-20 h-28 rounded-xl overflow-hidden bg-black shrink-0 relative">
+                                      {prod.video_url ? (
+                                        <video
+                                          src={prod.video_url}
+                                          poster={prod.thumbnail_url || undefined}
+                                          muted
+                                          loop
+                                          playsInline
+                                          onMouseEnter={(e) => e.currentTarget.play().catch(() => {})}
+                                          onMouseLeave={(e) => {
+                                            e.currentTarget.pause();
+                                            e.currentTarget.currentTime = 0;
+                                          }}
+                                          className="w-full h-full object-cover"
+                                        />
+                                      ) : prod.thumbnail_url ? (
+                                        <img src={prod.thumbnail_url} alt={prod.product_title} className="w-full h-full object-cover" />
+                                      ) : (
+                                        <div className="w-full h-full flex items-center justify-center text-[10px] text-white/60">
+                                          Ad Card
+                                        </div>
+                                      )}
+                                      {prod.video_url && (
+                                        <span className="absolute bottom-1 left-1 px-1 py-0.5 rounded bg-black/75 text-white text-[9px] font-bold">
+                                          MP4
+                                        </span>
+                                      )}
+                                    </div>
+
+                                    <div className="min-w-0 flex-1 space-y-1">
+                                      <div className="font-bold text-xs line-clamp-2 leading-snug" style={{ color: 'var(--chu)' }}>
+                                        {prod.product_title}
+                                      </div>
+                                      <div className="flex flex-wrap items-baseline gap-1.5">
+                                        <span
+                                          className="text-xs font-bold"
+                                          style={{ color: prod.selling_price ? 'var(--la)' : 'var(--mo2)' }}
+                                        >
+                                          {prod.selling_price || 'Chưa niêm yết giá'}
+                                        </span>
+                                        {prod.original_price && (
+                                          <span className="text-[10px] line-through" style={{ color: 'var(--mo2)' }}>
+                                            {prod.original_price}
+                                          </span>
+                                        )}
+                                      </div>
+                                      <p className="text-[11px] line-clamp-2" style={{ color: 'var(--mo)' }}>
+                                        {prod.caption || prod.cta_text}
+                                      </p>
+                                    </div>
+                                  </div>
+
+                                  {/* Separated Link Sản Phẩm & Link Shop */}
+                                  <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                                    {prod.product_url && (
+                                      <a
+                                        href={prod.product_url}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="px-2.5 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1 hover:opacity-90"
+                                        style={{ background: 'var(--xanh-bg)', color: 'var(--link)' }}
+                                        title={prod.product_url}
+                                      >
+                                        <Link2 className="w-3 h-3" />
+                                        Link Sản Phẩm
+                                        <ExternalLink className="w-2.5 h-2.5" />
+                                      </a>
+                                    )}
+                                    {prod.shop_url && (
+                                      <a
+                                        href={prod.shop_url}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="px-2.5 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1 hover:opacity-90"
+                                        style={{ background: 'var(--la-bg)', color: 'var(--la)' }}
+                                        title={prod.shop_url}
+                                      >
+                                        <ShoppingBag className="w-3 h-3" />
+                                        Link Shop
+                                        <ExternalLink className="w-2.5 h-2.5" />
+                                      </a>
+                                    )}
+                                    {prod.library_id && (
+                                      <a
+                                        href={`https://www.facebook.com/ads/library/?id=${prod.library_id}`}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="px-2 py-1 rounded-lg text-[10px] border flex items-center gap-1"
+                                        style={{ background: 'var(--nen)', borderColor: 'var(--vien-nhe)', color: 'var(--mo)' }}
+                                      >
+                                        Ad #{prod.library_id.slice(-6)}
+                                      </a>
+                                    )}
+                                  </div>
+                                </div>
+
+                                {/* Bottom Action Buttons: Save Video to Kho Video | Add to Affiliate Products */}
+                                <div className="flex items-center gap-1.5 pt-2 border-t" style={{ borderColor: 'var(--vien-nhe)' }}>
+                                  {prod.video_url && (
+                                    <button
+                                      type="button"
+                                      disabled={importingShopProdId === prod.id}
+                                      onClick={() => handleImportShopProductToVideos(prod)}
+                                      className="sw-pill-btn-primary flex-1 py-1.5 px-2.5 text-[11px] flex items-center justify-center gap-1"
+                                    >
+                                      <Download className="w-3 h-3" />
+                                      {importingShopProdId === prod.id ? 'Đang nạp MP4...' : 'Lưu Video & Clone'}
+                                    </button>
+                                  )}
+                                  {(prod.product_url || prod.shop_url) && (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        handleQuickAddShopProductToAffiliate(prod, selectedMetaShop.shop_name)
+                                      }
+                                      className="sw-pill-btn py-1.5 px-2.5 text-[11px] font-semibold border flex items-center justify-center gap-1"
+                                      style={{ background: 'var(--nen)', borderColor: 'var(--vien)', color: 'var(--chu)' }}
+                                    >
+                                      <Plus className="w-3 h-3" />
+                                      Tạo Mã Bio
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <div className="py-16 text-center text-xs" style={{ color: 'var(--mo)' }}>
+                        Chọn một Shop ở cột bên trái để xem toàn bộ danh sách sản phẩm &amp; video quảng cáo đang chạy của shop đó.
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1751,6 +3572,14 @@ export default function App() {
                               </td>
                               <td className="py-3 pl-3 text-right space-x-1.5 whitespace-nowrap">
                                 <button
+                                  onClick={() => handleReaDecompose(item.raw.id)}
+                                  disabled={reaBusyVideoId === item.raw.id}
+                                  className="sw-pill-btn px-2.5 py-1 text-[11px] border"
+                                  style={{ background: 'var(--xanh-bg)', borderColor: 'transparent', color: 'var(--link)' }}
+                                >
+                                  {reaBusyVideoId === item.raw.id ? 'Đang mổ xẻ...' : item.raw.rea_breakdown ? '✓ Đã mổ xẻ' : 'Mổ xẻ (rea)'}
+                                </button>
+                                <button
                                   onClick={() => setDrawerVideoId(item.raw.id)}
                                   className="sw-pill-btn px-2.5 py-1 text-[11px] border"
                                   style={{ background: 'var(--xam)', borderColor: 'var(--vien)', color: 'var(--chu)' }}
@@ -1866,15 +3695,15 @@ export default function App() {
                   </div>
                 )}
 
-                {/* Platform Filter Pills */}
+                {/* Platform Filter Pills — Focused on Meta Ecosystem (FB · IG · Threads) */}
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="sw-seg flex-wrap">
                     {[
-                      { id: 'all', label: 'Tất cả nguồn' },
-                      { id: 'meta_ads', label: 'Meta Ads' },
-                      { id: 'instagram', label: 'IG Reels' },
-                      { id: 'facebook', label: 'FB Reels' },
-                      { id: 'threads', label: 'Threads' },
+                      { id: 'all', label: 'Tất cả Hệ Meta' },
+                      { id: 'facebook', label: 'Facebook (Ads & Reels)' },
+                      { id: 'instagram', label: 'Instagram (Ads & Reels)' },
+                      { id: 'threads', label: 'Threads (Ads & Posts)' },
+                      { id: 'meta_ads', label: 'Meta Ads Library' },
                     ].map((pf) => (
                       <button
                         key={pf.id}
@@ -1886,6 +3715,106 @@ export default function App() {
                     ))}
                   </div>
                 </div>
+
+                {/* =========================================================
+                    DEDICATED POTENTIAL VIDEOS & COMPETITOR SHOP SPY PANEL
+                   ========================================================= */}
+                {activeTab === 'video-tiem-nang' && (
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                      <div className="sw-card p-4">
+                        <div className="text-[11px] font-medium" style={{ color: 'var(--mo)' }}>
+                          Video Tiềm Năng Đạt Chuẩn
+                        </div>
+                        <div className="text-2xl font-bold mt-1 flex items-baseline gap-2" style={{ color: 'var(--link)' }}>
+                          <span>{potentialSummary.totalPotential}</span>
+                          <span className="text-xs font-semibold" style={{ color: 'var(--la)' }}>
+                            ({potentialSummary.tierSCount} Hạng S · {potentialSummary.platformsCount} nền tảng)
+                          </span>
+                        </div>
+                      </div>
+                      <div className="sw-card p-4">
+                        <div className="text-[11px] font-medium" style={{ color: 'var(--mo)' }}>
+                          Shop Đang Chạy &amp; Link Bán
+                        </div>
+                        <div className="text-2xl font-bold mt-1 flex items-baseline gap-2" style={{ color: 'var(--chu)' }}>
+                          <span>{potentialSummary.uniqueShopsCount} shop</span>
+                          <span className="text-xs font-semibold" style={{ color: 'var(--la)' }}>
+                            ({potentialSummary.shopsWithLinks} có link bán)
+                          </span>
+                        </div>
+                      </div>
+                      <div className="sw-card p-4">
+                        <div className="text-[11px] font-medium" style={{ color: 'var(--mo)' }}>
+                          Tổng Quảng Cáo Đang Chạy
+                        </div>
+                        <div className="text-2xl font-bold mt-1 flex items-baseline gap-2" style={{ color: 'var(--xanh)' }}>
+                          <span>{formatCompact(potentialSummary.totalActiveAds)} QC</span>
+                          <span className="text-xs font-normal" style={{ color: 'var(--mo2)' }}>
+                            trên Meta Ad Library
+                          </span>
+                        </div>
+                      </div>
+                      <div className="sw-card p-4">
+                        <div className="text-[11px] font-medium" style={{ color: 'var(--mo)' }}>
+                          Đã Bóc Tách Giá Đang Bán
+                        </div>
+                        <div className="text-2xl font-bold mt-1 flex items-baseline gap-2" style={{ color: 'var(--la)' }}>
+                          <span>
+                            {potentialSummary.pricedCount}/{potentialSummary.totalPotential}
+                          </span>
+                          <span className="text-xs font-normal" style={{ color: 'var(--mo2)' }}>
+                            video có giá thực
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="sw-card p-3.5 flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="sw-seg">
+                          {[
+                            { id: 'all' as const, label: 'Tất cả Tiềm Năng' },
+                            { id: 'S' as const, label: 'Hạng S (≥82đ)' },
+                            { id: 'A' as const, label: 'Hạng A (68–81đ)' },
+                            { id: 'has_shop' as const, label: 'Đã lấy được Link Shop' },
+                          ].map((tf) => (
+                            <button
+                              key={tf.id}
+                              type="button"
+                              onClick={() => setPotentialTierFilter(tf.id)}
+                              className={`sw-seg-item ${potentialTierFilter === tf.id ? 'active' : ''}`}
+                            >
+                              {tf.label}
+                            </button>
+                          ))}
+                        </div>
+                        <select
+                          value={potentialSpyCountry}
+                          onChange={(e) => setPotentialSpyCountry(e.target.value as 'AUTO' | 'VN' | 'US')}
+                          className="sw-input px-2.5 py-1.5 text-xs font-medium"
+                          title="Chọn thị trường ưu tiên khi dò Shop & Ads"
+                        >
+                          <option value="AUTO">Thị trường dò Shop: Tự nhận diện (VN/US)</option>
+                          <option value="VN">Thị trường Việt Nam (Shopee / Web VN / FB VN)</option>
+                          <option value="US">Thị trường Mỹ &amp; Global (Shopify / Amazon / US Ads)</option>
+                        </select>
+                      </div>
+
+                      <button
+                        type="button"
+                        disabled={batchSpyRunning || displayedVideos.length === 0}
+                        onClick={handleEvaluatePotentialBatch}
+                        className="sw-pill-btn-primary px-4 py-2 text-xs font-semibold flex items-center gap-1.5"
+                      >
+                        <RefreshCw className={`w-3.5 h-3.5 ${batchSpyRunning ? 'animate-spin' : ''}`} />
+                        {batchSpyRunning
+                          ? 'Đang tự đánh giá & dò Shop / Link / Giá / Ads...'
+                          : `⚡ Tự Đánh Giá & Dò Shop / Giá / Ads (${Math.min(5, displayedVideos.length)} Video)`}
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 {/* Empty State */}
                 {displayedVideos.length === 0 ? (
@@ -1913,41 +3842,42 @@ export default function App() {
                     </div>
                   </div>
                 ) : viewMode === 'grid' ? (
-                  /* GRID VIEW — Exact SpyWinAds Video Card Anatomy */
+                  /* GRID VIEW — Exact SpyWinAds Video Card Anatomy + Live Competitor Shop Spy */
                   <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                     {displayedVideos.map((item) => {
                       const v = item.raw;
                       const pf = PLATFORM_META[v.platform] || PLATFORM_META.facebook;
                       const isWatch = watchlistIds.includes(v.id);
                       const isTest = testlistIds.includes(v.id);
+                      const isSpyingThis = spyingVideoId === v.id;
                       return (
                         <div key={v.id} className="sw-card p-4 flex flex-col justify-between gap-3 transition hover:shadow-md">
                           <div className="space-y-3">
-                            {/* 1. TOP ROW BADGES: Vòng tuổi video + Ô tuổi trang bán */}
+                            {/* 1. TOP ROW BADGES: Hạng Tiềm Năng + Tuổi video + Tốc độ view */}
                             <div className="flex items-center justify-between gap-2">
                               <div className="flex items-center gap-1.5 min-w-0">
                                 <span
                                   className="px-2.5 py-1 rounded-full text-[11px] font-bold shrink-0"
                                   style={{
                                     background:
-                                      item.categoryTab === 'video-win'
+                                      item.potentialTier === 'S'
                                         ? 'var(--la-bg)'
-                                        : item.categoryTab === 'video-tiem-nang'
+                                        : item.potentialTier === 'A'
                                         ? 'var(--xanh-bg)'
                                         : 'var(--o)',
                                     color:
-                                      item.categoryTab === 'video-win'
+                                      item.potentialTier === 'S'
                                         ? 'var(--la)'
-                                        : item.categoryTab === 'video-tiem-nang'
+                                        : item.potentialTier === 'A'
                                         ? 'var(--link)'
                                         : 'var(--chu)',
                                   }}
-                                  title="File video lên Meta lần đầu"
+                                  title={item.marketIntel?.verdict || 'Điểm đánh giá tiềm năng đa nền tảng'}
                                 >
-                                  {item.videoAgeDays} ngày
+                                  Hạng {item.potentialTier} · {item.potentialScore}đ
                                 </span>
                                 <span className="text-[11px] truncate" style={{ color: 'var(--mo2)' }}>
-                                  File lên Meta
+                                  {item.videoAgeDays}d · {formatCompact(item.velocityViewsPerDay)}/ngày
                                 </span>
                               </div>
 
@@ -1955,17 +3885,14 @@ export default function App() {
                                 <span
                                   className="px-2 py-0.5 rounded-full text-[10px] font-semibold flex items-center gap-1"
                                   style={{
-                                    background: item.isOldStoreWarning ? 'var(--cam-bg)' : 'var(--xam)',
-                                    color: item.isOldStoreWarning ? 'var(--cam)' : 'var(--mo)',
+                                    background: item.shopActive > 0 ? 'var(--xanh-bg)' : 'var(--xam)',
+                                    color: item.shopActive > 0 ? 'var(--link)' : 'var(--mo)',
                                   }}
-                                  title={
-                                    item.isOldStoreWarning
-                                      ? 'Cảnh báo: Trang bán đã chạy lâu re-up video'
-                                      : 'Trang bán mới, tín hiệu win thật'
-                                  }
+                                  title="Số lượng Shop đang chạy & tổng Quảng cáo active phát hiện được"
                                 >
-                                  {item.isOldStoreWarning && <AlertTriangle className="w-3 h-3" />}
-                                  Shop {item.storeAgeDays}d
+                                  {item.shopActive > 0
+                                    ? `${item.shopActive} shop · ${item.totalAdsSameVideo} QC`
+                                    : `${item.videoAgeDays} ngày`}
                                 </span>
                                 <button
                                   onClick={() => toggleWatchlist(v.id)}
@@ -1980,17 +3907,34 @@ export default function App() {
 
                             {/* 2. 9:16 PREVIEW + RIGHT SIDE TITLE/INFO */}
                             <div className="flex gap-3">
-                              <div className="relative w-[104px] h-[168px] shrink-0 rounded-2xl overflow-hidden bg-black group">
+                              <div
+                                onClick={() => {
+                                  if (item.localMediaUrl) {
+                                    setPlayingCardId((prev) => (prev === v.id ? null : v.id));
+                                  } else {
+                                    setDrawerVideoId(v.id);
+                                  }
+                                }}
+                                className="relative w-[112px] h-[176px] shrink-0 rounded-2xl overflow-hidden bg-black group cursor-pointer"
+                                title={item.localMediaUrl ? 'Bấm để phát/dừng video trực tiếp' : 'Bấm để mở trình phát & phân tích'}
+                              >
                                 {item.localMediaUrl ? (
                                   <video
                                     src={item.localMediaUrl}
-                                    muted
+                                    poster={v.thumbnail_url || undefined}
+                                    muted={playingCardId !== v.id}
+                                    controls={playingCardId === v.id}
+                                    autoPlay={playingCardId === v.id}
                                     loop
                                     playsInline
-                                    onMouseEnter={(e) => e.currentTarget.play().catch(() => {})}
+                                    onMouseEnter={(e) => {
+                                      if (playingCardId !== v.id) e.currentTarget.play().catch(() => {});
+                                    }}
                                     onMouseLeave={(e) => {
-                                      e.currentTarget.pause();
-                                      e.currentTarget.currentTime = 0;
+                                      if (playingCardId !== v.id) {
+                                        e.currentTarget.pause();
+                                        e.currentTarget.currentTime = 0;
+                                      }
                                     }}
                                     className="w-full h-full object-cover"
                                   />
@@ -2005,18 +3949,25 @@ export default function App() {
                                   />
                                 )}
                                 <span
-                                  className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded-md text-[9px] font-bold"
+                                  className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded-md text-[9px] font-bold pointer-events-none"
                                   style={{ background: pf.pillBg, color: pf.pillColor }}
                                 >
                                   {pf.short}
                                 </span>
-                                <span className="absolute bottom-1.5 left-1.5 px-1.5 py-0.5 rounded-md bg-black/70 text-white text-[9px] font-semibold flex items-center gap-0.5">
+                                {playingCardId !== v.id && (
+                                  <div className="absolute inset-0 flex items-center justify-center bg-black/25 opacity-90 group-hover:bg-black/40 transition pointer-events-none">
+                                    <span className="w-9 h-9 rounded-full bg-black/70 text-white flex items-center justify-center shadow-md">
+                                      <Play className="w-4 h-4 fill-white ml-0.5" />
+                                    </span>
+                                  </div>
+                                )}
+                                <span className="absolute bottom-1.5 left-1.5 px-1.5 py-0.5 rounded-md bg-black/70 text-white text-[9px] font-semibold flex items-center gap-0.5 pointer-events-none">
                                   <Play className="w-2.5 h-2.5 fill-white" />
                                   {formatCompact(v.views)}
                                 </span>
                               </div>
 
-                              {/* 3. TITLE, PRICE, AUTHOR & SUMMARY LINE */}
+                              {/* 3. TITLE, SELLING PRICE, PRODUCT LINK + SHOP LINK & PLACEMENTS */}
                               <div className="min-w-0 flex-1 flex flex-col justify-between py-0.5">
                                 <div className="space-y-1">
                                   <h3
@@ -2026,17 +3977,67 @@ export default function App() {
                                   >
                                     {v.title}
                                   </h3>
-                                  <div className="flex items-center gap-2 text-xs">
-                                    <span className="font-bold" style={{ color: 'var(--la)' }}>
+                                  <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                                    <span
+                                      className="font-bold"
+                                      style={{
+                                        color: item.priceLabel !== 'Chưa niêm yết giá' ? 'var(--la)' : 'var(--mo)',
+                                      }}
+                                    >
                                       {item.priceLabel}
                                     </span>
-                                    <span className="truncate text-[11px]" style={{ color: 'var(--mo2)' }}>
-                                      {v.author}
-                                    </span>
+                                    {item.originalPriceLabel && (
+                                      <span className="text-[10px] line-through" style={{ color: 'var(--mo2)' }}>
+                                        {item.originalPriceLabel}
+                                      </span>
+                                    )}
                                   </div>
-                                  <p className="text-[11px] font-medium pt-0.5" style={{ color: 'var(--mo)' }}>
-                                    Chạy {item.videoAgeDays} ngày · {item.totalAdsSameVideo} QC cùng video
+                                  <div className="flex flex-wrap items-center gap-1 pt-0.5">
+                                    {item.primaryProductUrl && (
+                                      <a
+                                        href={item.primaryProductUrl}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="px-1.5 py-0.5 rounded-md text-[10px] font-bold flex items-center gap-0.5 hover:underline"
+                                        style={{ background: 'var(--xanh-bg)', color: 'var(--link)' }}
+                                        title={`Link Sản Phẩm: ${item.primaryProductUrl}`}
+                                      >
+                                        <Link2 className="w-2.5 h-2.5" />
+                                        Link SP
+                                        <ExternalLink className="w-2.5 h-2.5" />
+                                      </a>
+                                    )}
+                                    {item.primaryShopUrl && (
+                                      <a
+                                        href={item.primaryShopUrl}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="px-1.5 py-0.5 rounded-md text-[10px] font-semibold flex items-center gap-0.5 hover:underline"
+                                        style={{ background: 'var(--la-bg)', color: 'var(--la)' }}
+                                        title={`Link Shop: ${item.primaryShopUrl}`}
+                                      >
+                                        <ShoppingBag className="w-2.5 h-2.5" />
+                                        Link Shop
+                                        <ExternalLink className="w-2.5 h-2.5" />
+                                      </a>
+                                    )}
+                                  </div>
+                                  <p className="text-[11px] truncate" style={{ color: 'var(--mo2)' }}>
+                                    {v.author}
+                                    {v.ig_handle && !v.author.includes(v.ig_handle) ? ` (@${v.ig_handle})` : ''}
                                   </p>
+                                  <div className="flex flex-wrap items-center gap-1 text-[10px]" style={{ color: 'var(--mo)' }}>
+                                    <span>Liên kết:</span>
+                                    {item.placements.map((pl) => (
+                                      <span
+                                        key={pl}
+                                        className="px-1.5 py-0.5 rounded font-bold uppercase"
+                                        style={{ background: 'var(--xam)', color: 'var(--chu)' }}
+                                      >
+                                        {pl === 'facebook' ? 'FB' : pl === 'instagram' ? 'IG' : pl === 'threads' ? 'Threads' : pl}
+                                      </span>
+                                    ))}
+                                  </div>
                                 </div>
 
                                 <div className="flex flex-wrap gap-1 pt-1">
@@ -2061,38 +4062,169 @@ export default function App() {
                               </div>
                             </div>
 
-                            {/* 4. 4 METRIC BOXES (Win, Scale, Shop, Fanpage) + SPARKLINE */}
+                            {/* 4. REAL COMPETITOR SHOPS RUNNING THIS PRODUCT */}
+                            <div
+                              className="p-2.5 rounded-xl border space-y-1.5"
+                              style={{ background: 'var(--xam)', borderColor: 'var(--vien-nhe)' }}
+                            >
+                              <div className="flex items-center justify-between gap-2 text-[10px]">
+                                <span className="font-bold flex items-center gap-1" style={{ color: 'var(--chu)' }}>
+                                  <ShoppingBag className="w-3 h-3" style={{ color: 'var(--link)' }} />
+                                  {item.shops.length > 0
+                                    ? `Shop Meta Ads (${item.shops.length} shop):`
+                                    : 'Chưa dò Shop trên Meta Ads:'}
+                                </span>
+                                <div className="flex items-center gap-1">
+                                  {item.metaPageId && (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        handleInspectMetaShopProducts({
+                                          page_id: item.metaPageId,
+                                          shop_name: v.shop_name || v.author,
+                                        })
+                                      }
+                                      className="px-2 py-0.5 rounded-md font-bold border transition hover:opacity-90"
+                                      style={{ background: 'var(--la-bg)', borderColor: 'transparent', color: 'var(--la)' }}
+                                      title="Mở toàn bộ kệ Sản Phẩm mà Shop này đang chạy Ads bán"
+                                    >
+                                      Kệ SP Shop
+                                    </button>
+                                  )}
+                                  <button
+                                    type="button"
+                                    disabled={isSpyingThis}
+                                    onClick={() => handleEvaluateSingleVideo(v.id)}
+                                    className="px-2 py-0.5 rounded-md font-semibold flex items-center gap-1 border transition hover:opacity-90"
+                                    style={{ background: 'var(--nen)', borderColor: 'var(--vien-nhe)', color: 'var(--link)' }}
+                                  >
+                                    <Search className="w-2.5 h-2.5" />
+                                    {isSpyingThis ? 'Đang dò...' : item.shops.length > 0 ? 'Cập nhật' : 'Dò Meta Ads'}
+                                  </button>
+                                </div>
+                              </div>
+
+                              {item.shops.length > 0 ? (
+                                <div className="space-y-1">
+                                  {item.shops.slice(0, 2).map((sh, sIdx) => (
+                                    <div
+                                      key={sIdx}
+                                      className="flex items-center justify-between gap-1.5 text-[11px] px-2 py-1 rounded-lg"
+                                      style={{ background: 'var(--nen)' }}
+                                    >
+                                      <div className="min-w-0 flex-1 truncate">
+                                        <span className="font-semibold" style={{ color: 'var(--chu)' }}>
+                                          {sh.shop_name}
+                                        </span>
+                                        {sh.selling_price && (
+                                          <span className="ml-1.5 font-bold" style={{ color: 'var(--la)' }}>
+                                            {sh.selling_price}
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div className="flex items-center gap-1 shrink-0">
+                                        {sh.ads_count > 0 && (
+                                          <a
+                                            href={sh.ad_library_url}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="px-1.5 py-0.5 rounded text-[10px] font-bold hover:underline"
+                                            style={{ background: 'var(--xanh-bg)', color: 'var(--link)' }}
+                                            title="Xem toàn bộ quảng cáo của shop này trên Meta Ad Library"
+                                          >
+                                            {sh.ads_count} QC
+                                          </a>
+                                        )}
+                                        {sh.product_url && (
+                                          <a
+                                            href={sh.product_url}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="px-1.5 py-0.5 rounded text-[10px] font-bold flex items-center gap-0.5 hover:underline"
+                                            style={{ background: 'var(--xanh-bg)', color: 'var(--link)' }}
+                                            title={`Link sản phẩm: ${sh.product_url}`}
+                                          >
+                                            SP
+                                            <ExternalLink className="w-2.5 h-2.5" />
+                                          </a>
+                                        )}
+                                        {sh.shop_url ? (
+                                          <a
+                                            href={sh.shop_url}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="px-1.5 py-0.5 rounded text-[10px] font-semibold flex items-center gap-0.5 hover:underline"
+                                            style={{ background: 'var(--la-bg)', color: 'var(--la)' }}
+                                            title={`Link shop: ${sh.shop_url}`}
+                                          >
+                                            Shop
+                                            <ExternalLink className="w-2.5 h-2.5" />
+                                          </a>
+                                        ) : sh.page_url ? (
+                                          <a
+                                            href={sh.page_url}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="px-1.5 py-0.5 rounded text-[10px] font-medium flex items-center gap-0.5 hover:underline"
+                                            style={{ background: 'var(--o)', color: 'var(--mo)' }}
+                                          >
+                                            Page
+                                            <ExternalLink className="w-2.5 h-2.5" />
+                                          </a>
+                                        ) : null}
+                                      </div>
+                                    </div>
+                                  ))}
+                                  {item.shops.length > 2 && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setDrawerVideoId(v.id)}
+                                      className="text-[10px] font-semibold hover:underline pl-1"
+                                      style={{ color: 'var(--link)' }}
+                                    >
+                                      + Xem thêm {item.shops.length - 2} shop khác trong khung Phân tích →
+                                    </button>
+                                  )}
+                                </div>
+                              ) : (
+                                <div className="text-[10px]" style={{ color: 'var(--mo2)' }}>
+                                  Bấm &ldquo;Dò Meta Ads&rdquo; để tìm Shop đang chạy trên Meta Ad Library, lấy Link SP, Link Shop và Giá bán.
+                                </div>
+                              )}
+                            </div>
+
+                            {/* 5. 4 METRIC BOXES + SPARKLINE */}
                             <div className="grid grid-cols-4 gap-1.5">
                               <div className="p-2 rounded-xl text-center" style={{ background: 'var(--xam)' }}>
                                 <div className="text-[10px]" style={{ color: 'var(--mo)' }}>
-                                  Win (7-14d)
+                                  Điểm TN
                                 </div>
                                 <div className="text-sm font-bold" style={{ color: 'var(--la)' }}>
-                                  {item.winCount}
+                                  {item.potentialScore}
                                 </div>
                               </div>
                               <div className="p-2 rounded-xl text-center" style={{ background: 'var(--xam)' }}>
                                 <div className="text-[10px]" style={{ color: 'var(--mo)' }}>
-                                  Scale (&lt;7d)
+                                  Số Ads
                                 </div>
                                 <div className="text-sm font-bold" style={{ color: 'var(--xanh)' }}>
-                                  {item.scaleCount}
+                                  {item.totalAdsSameVideo}
                                 </div>
                               </div>
                               <div className="p-2 rounded-xl text-center" style={{ background: 'var(--xam)' }}>
                                 <div className="text-[10px]" style={{ color: 'var(--mo)' }}>
-                                  Shop
+                                  Shop chạy
                                 </div>
                                 <div className="text-xs font-bold mt-0.5" style={{ color: 'var(--chu)' }}>
-                                  {item.shopActive}/{item.shopTotal}
+                                  {item.shopActive}
                                 </div>
                               </div>
                               <div className="p-2 rounded-xl text-center" style={{ background: 'var(--xam)' }}>
                                 <div className="text-[10px]" style={{ color: 'var(--mo)' }}>
-                                  Fanpage
+                                  View/ngày
                                 </div>
                                 <div className="text-xs font-bold mt-0.5" style={{ color: 'var(--chu)' }}>
-                                  {item.fanpageActive}/{item.fanpageTotal}
+                                  {formatCompact(item.velocityViewsPerDay)}
                                 </div>
                               </div>
                             </div>
@@ -2103,23 +4235,23 @@ export default function App() {
                               style={{ background: 'var(--xam)' }}
                             >
                               <span className="text-[10px] font-medium shrink-0" style={{ color: 'var(--mo2)' }}>
-                                14 ngày
+                                Đà 14d
                               </span>
                               <div className="flex-1">
                                 <Sparkline
                                   bars={item.sparkline14d}
                                   highlightColor={
-                                    item.categoryTab === 'video-win' ? 'var(--la)' : 'var(--xanh)'
+                                    item.potentialTier === 'S' ? 'var(--la)' : 'var(--xanh)'
                                   }
                                 />
                               </div>
                               <span className="text-[10px] font-bold shrink-0" style={{ color: 'var(--chu)' }}>
-                                {v.viral_score}/100
+                                Viral {v.viral_score}
                               </span>
                             </div>
                           </div>
 
-                          {/* 5. BOTTOM ACTION BUTTONS FOOTER: Phân tích | Tải video | Clone */}
+                          {/* 6. BOTTOM ACTION BUTTONS FOOTER: Phân tích | Tải video | Clone */}
                           <div className="flex items-center gap-2 pt-2 border-t" style={{ borderColor: 'var(--vien-nhe)' }}>
                             <button
                               onClick={() => setDrawerVideoId(v.id)}
@@ -2130,7 +4262,7 @@ export default function App() {
                                 color: 'var(--chu)',
                               }}
                             >
-                              Phân tích
+                              Phân tích &amp; Shop
                             </button>
                             <button
                               onClick={() => handleDownloadVideoSource(v)}
@@ -2146,6 +4278,19 @@ export default function App() {
                               <span className="hidden sm:inline">Tải</span>
                             </button>
                             <button
+                              onClick={() => handleSelectForFlowClone(v)}
+                              className="sw-pill-btn py-2 px-2.5 text-xs font-semibold border flex items-center justify-center gap-1"
+                              style={{
+                                background: 'var(--la-bg)',
+                                borderColor: 'transparent',
+                                color: 'var(--la)',
+                              }}
+                              title="Clone video này bằng tài khoản Google Flow (flow.google.com)"
+                            >
+                              <Film className="w-3.5 h-3.5" />
+                              Flow
+                            </button>
+                            <button
                               onClick={() => handleSelectForClone(v)}
                               className="sw-pill-btn-primary flex-1 py-2 px-3 text-xs flex items-center justify-center gap-1"
                             >
@@ -2158,31 +4303,30 @@ export default function App() {
                     })}
                   </div>
                 ) : (
-                  /* TABLE VIEW (Bảng) */
+                  /* TABLE VIEW (Bảng) — Full Competitor Shops, Links, Ads Count & Live Price */
                   <div className="sw-card p-4 overflow-x-auto">
                     <table className="w-full text-left border-collapse text-xs">
                       <thead>
                         <tr className="border-b" style={{ borderColor: 'var(--vien-nhe)', color: 'var(--mo)' }}>
-                          <th className="py-2.5 pr-3 font-semibold">Sản phẩm & Video</th>
-                          <th className="py-2.5 px-2 font-semibold">Tuổi Video</th>
-                          <th className="py-2.5 px-2 font-semibold">Tuổi Shop</th>
-                          <th className="py-2.5 px-2 font-semibold">Win</th>
-                          <th className="py-2.5 px-2 font-semibold">Scale</th>
-                          <th className="py-2.5 px-2 font-semibold">Shop / Page</th>
-                          <th className="py-2.5 px-2 font-semibold w-28">Đà 14 ngày</th>
+                          <th className="py-2.5 pr-3 font-semibold">Sản phẩm &amp; Nguồn Viral</th>
+                          <th className="py-2.5 px-2 font-semibold">Tiềm Năng</th>
+                          <th className="py-2.5 px-2 font-semibold">Các Shop Đang Chạy &amp; Link Bán</th>
+                          <th className="py-2.5 px-2 font-semibold">Số Lượng Ads</th>
+                          <th className="py-2.5 px-2 font-semibold">Giá Đang Bán</th>
                           <th className="py-2.5 pl-2 font-semibold text-right">Thao tác</th>
                         </tr>
                       </thead>
                       <tbody>
                         {displayedVideos.map((item) => {
                           const v = item.raw;
+                          const pf = PLATFORM_META[v.platform] || PLATFORM_META.facebook;
                           return (
                             <tr
                               key={v.id}
                               className="border-b last:border-b-0"
                               style={{ borderColor: 'var(--vien-nhe)' }}
                             >
-                              <td className="py-3 pr-3 max-w-[280px]">
+                              <td className="py-3 pr-3 max-w-[260px]">
                                 <div className="flex items-center gap-2.5">
                                   <img
                                     src={
@@ -2200,43 +4344,101 @@ export default function App() {
                                     >
                                       {v.title}
                                     </div>
-                                    <div className="text-[11px]" style={{ color: 'var(--mo2)' }}>
-                                      {v.author} · {item.priceLabel}
+                                    <div className="text-[11px] flex items-center gap-1.5 mt-0.5" style={{ color: 'var(--mo2)' }}>
+                                      <span
+                                        className="px-1.5 py-0.5 rounded text-[10px] font-bold"
+                                        style={{ background: pf.pillBg, color: pf.pillColor }}
+                                      >
+                                        {pf.short}
+                                      </span>
+                                      <span className="truncate">{v.author}</span>
+                                      <span>· {item.videoAgeDays}d</span>
                                     </div>
                                   </div>
                                 </div>
                               </td>
-                              <td className="py-3 px-2 font-bold">{item.videoAgeDays} ngày</td>
-                              <td className="py-3 px-2">
+                              <td className="py-3 px-2 whitespace-nowrap">
                                 <span
-                                  className="px-2 py-0.5 rounded-full text-[11px] font-semibold"
+                                  className="px-2 py-0.5 rounded-full text-[11px] font-bold"
                                   style={{
-                                    background: item.isOldStoreWarning ? 'var(--cam-bg)' : 'var(--xam)',
-                                    color: item.isOldStoreWarning ? 'var(--cam)' : 'var(--mo)',
+                                    background: item.potentialTier === 'S' ? 'var(--la-bg)' : 'var(--xanh-bg)',
+                                    color: item.potentialTier === 'S' ? 'var(--la)' : 'var(--link)',
                                   }}
                                 >
-                                  {item.storeAgeDays} ngày
+                                  Hạng {item.potentialTier} · {item.potentialScore}đ
                                 </span>
+                                <div className="text-[10px] mt-0.5" style={{ color: 'var(--mo2)' }}>
+                                  {formatCompact(item.velocityViewsPerDay)} view/ngày
+                                </div>
                               </td>
-                              <td className="py-3 px-2 font-bold" style={{ color: 'var(--la)' }}>
-                                {item.winCount}
+                              <td className="py-3 px-2 max-w-[290px]">
+                                {item.shops.length > 0 ? (
+                                  <div className="space-y-1">
+                                    {item.shops.slice(0, 2).map((sh, idxS) => (
+                                      <div key={idxS} className="flex flex-wrap items-center gap-1 text-[11px]">
+                                        <span className="font-semibold truncate max-w-[120px]" style={{ color: 'var(--chu)' }}>
+                                          {sh.shop_name}
+                                        </span>
+                                        {sh.product_url && (
+                                          <a
+                                            href={sh.product_url}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="px-1.5 py-0.5 rounded text-[10px] font-bold flex items-center gap-0.5 shrink-0 hover:underline"
+                                            style={{ background: 'var(--xanh-bg)', color: 'var(--link)' }}
+                                            title={sh.product_url}
+                                          >
+                                            Link SP
+                                            <ExternalLink className="w-2.5 h-2.5" />
+                                          </a>
+                                        )}
+                                        {sh.shop_url && (
+                                          <a
+                                            href={sh.shop_url}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="px-1.5 py-0.5 rounded text-[10px] font-semibold flex items-center gap-0.5 shrink-0 hover:underline"
+                                            style={{ background: 'var(--la-bg)', color: 'var(--la)' }}
+                                            title={sh.shop_url}
+                                          >
+                                            Link Shop
+                                            <ExternalLink className="w-2.5 h-2.5" />
+                                          </a>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <span className="text-[11px]" style={{ color: 'var(--mo2)' }}>
+                                    Chưa dò shop
+                                  </span>
+                                )}
                               </td>
-                              <td className="py-3 px-2 font-bold" style={{ color: 'var(--xanh)' }}>
-                                {item.scaleCount}
+                              <td className="py-3 px-2 font-bold whitespace-nowrap" style={{ color: 'var(--xanh)' }}>
+                                {item.totalAdsSameVideo > 0 ? `${item.totalAdsSameVideo} QC active` : '0 QC'}
                               </td>
-                              <td className="py-3 px-2" style={{ color: 'var(--mo)' }}>
-                                {item.shopActive}/{item.shopTotal} · {item.fanpageActive}/{item.fanpageTotal}
-                              </td>
-                              <td className="py-3 px-2">
-                                <Sparkline bars={item.sparkline14d} />
+                              <td
+                                className="py-3 px-2 font-bold whitespace-nowrap"
+                                style={{ color: item.priceLabel !== 'Chưa niêm yết giá' ? 'var(--la)' : 'var(--mo2)' }}
+                              >
+                                {item.priceLabel}
                               </td>
                               <td className="py-3 pl-2 text-right space-x-1.5 whitespace-nowrap">
+                                <button
+                                  type="button"
+                                  disabled={spyingVideoId === v.id}
+                                  onClick={() => handleEvaluateSingleVideo(v.id)}
+                                  className="sw-pill-btn px-2.5 py-1 text-[11px] border"
+                                  style={{ background: 'var(--xanh-bg)', borderColor: 'transparent', color: 'var(--link)' }}
+                                >
+                                  {spyingVideoId === v.id ? 'Đang dò...' : 'Dò Shop'}
+                                </button>
                                 <button
                                   onClick={() => setDrawerVideoId(v.id)}
                                   className="sw-pill-btn px-2.5 py-1 text-[11px] border"
                                   style={{ background: 'var(--xam)', borderColor: 'var(--vien)', color: 'var(--chu)' }}
                                 >
-                                  Phân tích
+                                  Chi tiết
                                 </button>
                                 <button
                                   onClick={() => handleSelectForClone(v)}
@@ -2321,12 +4523,19 @@ export default function App() {
                   <div className="lg:col-span-5 sw-card p-5 space-y-4">
                     <h2 className="text-sm font-bold flex items-center gap-2" style={{ color: 'var(--chu)' }}>
                       <Video className="w-4 h-4" style={{ color: 'var(--xanh)' }} />
-                      Cấu hình Clone & Gắn Sản Phẩm Affiliate
+                      Cấu hình Remake Video Viral (Organic 9:16)
                     </h2>
+
+                    <div
+                      className="p-3 rounded-2xl border text-[11px] leading-relaxed"
+                      style={{ background: 'var(--xam)', borderColor: 'var(--vien-nhe)', color: 'var(--mo)' }}
+                    >
+                      Xuất video <strong style={{ color: 'var(--la)' }}>100% sạch kiểu creator organic</strong> (đã gỡ bỏ hoàn toàn khung banner CTA sản phẩm &amp; watermark khỏi video) để tối ưu thuật toán đề xuất tự nhiên.
+                    </div>
 
                     <div>
                       <label className="block text-[11px] font-semibold mb-1" style={{ color: 'var(--mo)' }}>
-                        1. Video gốc (Từ bảng SpyWinAds)
+                        1. Video viral gốc (Từ kho quét Agent-Reach)
                       </label>
                       <select
                         value={selectedVideoId}
@@ -2348,13 +4557,14 @@ export default function App() {
 
                     <div>
                       <label className="block text-[11px] font-semibold mb-1" style={{ color: 'var(--mo)' }}>
-                        2. Sản phẩm Affiliate gắn CTA
+                        2. Điều hướng Comment / Bio sau khi Viral (Tuỳ chọn — KHÔNG chèn lên video)
                       </label>
                       <select
                         value={selectedProductId}
                         onChange={(e) => setSelectedProductId(Number(e.target.value))}
                         className="sw-input w-full px-3 py-2 text-xs"
                       >
+                        <option value={0}>-- Không gắn sản phẩm (100% Remake Viral Organic thuần) --</option>
                         {products.map((p) => (
                           <option key={p.id} value={p.id}>
                             #{p.code} — {p.name} ({p.price} · {p.platform_name})
@@ -2366,29 +4576,30 @@ export default function App() {
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <label className="block text-[11px] font-semibold mb-1" style={{ color: 'var(--mo)' }}>
-                          Chế độ Muse AI
+                          Chế độ Remake Video
                         </label>
                         <select
                           value={cloneMode}
                           onChange={(e) => setCloneMode(e.target.value)}
                           className="sw-input w-full px-3 py-2 text-xs"
                         >
-                          <option value="muse_prompt_remap">Muse Scene & Script Remap</option>
-                          <option value="muse_avatar_motion">Muse Avatar & LipSync</option>
+                          <option value="rea_video_remake">rea-video Shot-by-Shot Decompose &amp; Remake + FFmpeg 9:16</option>
+                          <option value="muse_prompt_remap">Muse Scene &amp; Script Remap</option>
+                          <option value="muse_avatar_motion">Muse Avatar &amp; LipSync</option>
                           <option value="smart_reedit">Smart FFmpeg Re-edit</option>
                         </select>
                       </div>
                       <div>
                         <label className="block text-[11px] font-semibold mb-1" style={{ color: 'var(--mo)' }}>
-                          Vị trí Banner CTA
+                          Hiển thị trên Video (Không khung CTA)
                         </label>
                         <select
                           value={ctaPosition}
                           onChange={(e) => setCtaPosition(e.target.value)}
                           className="sw-input w-full px-3 py-2 text-xs"
                         >
-                          <option value="bottom_banner">Bottom Pill (Chuẩn Reels)</option>
-                          <option value="top_pill">Top Dynamic Island</option>
+                          <option value="clean_organic">Video sạch 100% (Không khung / Không chữ)</option>
+                          <option value="hook_3s_only">Chỉ hiện chữ Hook 3s đầu (Kiểu Creator)</option>
                         </select>
                       </div>
                     </div>
@@ -2425,14 +4636,61 @@ export default function App() {
                     </div>
 
                     <div>
-                      <label className="block text-[11px] font-semibold mb-1" style={{ color: 'var(--mo)' }}>
-                        Kịch bản 3 phần (0-3s Hook · Demo · CTA #MãSP)
-                      </label>
+                      <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+                        <label className="block text-[11px] font-semibold" style={{ color: 'var(--mo)' }}>
+                          Kịch bản 3 phần (0-3s Hook · Nội dung giữ nhịp · Chốt organic)
+                        </label>
+                        {selectedVideo && (
+                          <div className="flex items-center gap-1.5">
+                            {selectedVideo.rea_breakdown ? (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const bd = selectedVideo.rea_breakdown;
+                                  if (!bd) return;
+                                  const shotLines = (bd.shots || [])
+                                    .slice(0, 5)
+                                    .map(
+                                      (s) =>
+                                        `[${s.start.toFixed(1)}s-${s.end.toFixed(1)}s ${s.label} · ${s.remake_route}] ${
+                                          s.prompt || bd.verdict
+                                        }`
+                                    )
+                                    .join('\n');
+                                  setPromptScript(shotLines || bd.remake_md_excerpt || bd.video_md_excerpt || bd.verdict);
+                                  setCloneMode('rea_video_remake');
+                                  notify(`Đã nạp kịch bản ${bd.shots_count} shots từ rea-video!`);
+                                }}
+                                className="sw-pill-btn px-2.5 py-1 text-[10px] font-bold flex items-center gap-1"
+                                style={{ background: 'var(--xanh-bg)', color: 'var(--link)' }}
+                              >
+                                <Scissors className="w-3 h-3" />
+                                Nạp {selectedVideo.rea_breakdown.shots_count} shots rea-video
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                disabled={reaBusyVideoId === selectedVideo.id}
+                                onClick={() => handleReaDecompose(selectedVideo.id, undefined, true)}
+                                className="sw-pill-btn px-2.5 py-1 text-[10px] font-bold border flex items-center gap-1"
+                                style={{
+                                  background: 'var(--xanh-bg)',
+                                  borderColor: 'transparent',
+                                  color: 'var(--link)',
+                                }}
+                              >
+                                <Scissors className="w-3 h-3" />
+                                {reaBusyVideoId === selectedVideo.id ? 'Đang mổ xẻ & nạp Shot...' : '🎬 Mổ xẻ & Nạp Shot (rea-video)'}
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
                       <textarea
                         rows={3}
                         value={promptScript}
                         onChange={(e) => setPromptScript(e.target.value)}
-                        placeholder="Nhập câu Hook 3 giây đầu hiển thị trực tiếp trên video clone..."
+                        placeholder="Nhập câu Hook 3 giây đầu (sẽ dùng cho caption hoặc hiện tối giản 3s đầu nếu bật)..."
                         className="sw-input w-full p-3 text-xs"
                       />
                     </div>
@@ -2444,7 +4702,7 @@ export default function App() {
                         onChange={(e) => setAntiDuplicate(e.target.checked)}
                         className="rounded"
                       />
-                      Bật Anti-Duplicate (FFmpeg Mirror + Speed 1.03x + Xoá Metadata)
+                      Bật Anti-Duplicate (FFmpeg Micro-Crop + Chỉnh màu + Xoá Metadata)
                     </label>
 
                     <button
@@ -2455,7 +4713,7 @@ export default function App() {
                       <Sparkles className="w-4 h-4" />
                       {isLaunchingClone
                         ? 'Đang khởi tạo...'
-                        : `Render Video 9:16 bằng Muse AI ${batchCount > 1 ? `(${batchCount}x)` : ''}`}
+                        : `Remake Video Viral 9:16 Sạch (Organic) ${batchCount > 1 ? `(${batchCount}x)` : ''}`}
                     </button>
                   </div>
 
@@ -2497,7 +4755,7 @@ export default function App() {
                                 className="px-2 py-0.5 rounded-full text-[10px] font-bold"
                                 style={{ background: 'var(--la-bg)', color: 'var(--la)' }}
                               >
-                                Hoàn tất · #{activeCloneJob.product_code}
+                                {activeCloneJob.product_code ? `Hoàn tất · #${activeCloneJob.product_code}` : 'Hoàn tất · Organic Viral'}
                               </span>
                               {activeCloneJob.muse_token_label && (
                                 <span
@@ -2543,14 +4801,14 @@ export default function App() {
                       </div>
                     )}
 
-                    {/* All Jobs List */}
+                    {/* Muse Jobs List */}
                     <div className="space-y-2.5 max-h-[340px] overflow-y-auto pr-1">
-                      {jobs.length === 0 ? (
+                      {museJobs.length === 0 ? (
                         <div className="py-10 text-center text-xs" style={{ color: 'var(--mo)' }}>
-                          Chưa có job clone nào. Chọn video & bấm "Render Video 9:16 bằng Muse AI" bên trái!
+                          Chưa có job clone nào. Chọn video & bấm "Remake Video Viral 9:16" bên trái!
                         </div>
                       ) : (
-                        jobs.map((job) => (
+                        museJobs.map((job) => (
                           <div
                             key={job.id}
                             onClick={() => job.status === 'completed' && setActiveCloneJobId(job.id)}
@@ -2565,33 +4823,83 @@ export default function App() {
                                 <span className="font-bold">Job #{job.id}</span>
                                 <span
                                   className="px-2 py-0.5 rounded-full text-[10px] font-semibold"
-                                  style={{ background: 'var(--nen)', color: 'var(--cam)' }}
+                                  style={{ background: 'var(--nen)', color: job.product_code ? 'var(--cam)' : 'var(--la)' }}
                                 >
-                                  #{job.product_code || job.product_id}
+                                  {job.product_code ? `#${job.product_code}` : 'Organic Viral'}
                                 </span>
                                 <span className="truncate" style={{ color: 'var(--mo)' }}>
                                   {job.source_title || job.prompt_script}
                                 </span>
                               </div>
-                              <span
-                                className="px-2.5 py-0.5 rounded-full text-[10px] font-bold shrink-0"
-                                style={{
-                                  background:
-                                    job.status === 'completed'
-                                      ? 'var(--la-bg)'
-                                      : job.status === 'failed'
-                                      ? 'var(--do-bg)'
-                                      : 'var(--cam-bg)',
-                                  color:
-                                    job.status === 'completed'
-                                      ? 'var(--la)'
-                                      : job.status === 'failed'
-                                      ? 'var(--do)'
-                                      : 'var(--cam)',
-                                }}
-                              >
-                                {job.status} ({job.progress}%)
-                              </span>
+                              <div className="flex items-center gap-1.5 shrink-0" onClick={(e) => e.stopPropagation()}>
+                                <span
+                                  className="px-2.5 py-0.5 rounded-full text-[10px] font-bold"
+                                  style={{
+                                    background:
+                                      job.status === 'completed'
+                                        ? 'var(--la-bg)'
+                                        : job.status === 'failed'
+                                        ? 'var(--do-bg)'
+                                        : 'var(--cam-bg)',
+                                    color:
+                                      job.status === 'completed'
+                                        ? 'var(--la)'
+                                        : job.status === 'failed'
+                                        ? 'var(--do)'
+                                        : 'var(--cam)',
+                                  }}
+                                >
+                                  {job.status === 'completed'
+                                    ? 'Hoàn tất (100%)'
+                                    : job.status === 'failed'
+                                    ? `Thất bại (${job.progress}%)`
+                                    : job.status === 'analyzing'
+                                    ? `Đang chuẩn bị Frame & Prompt (${job.progress}%)`
+                                    : job.status === 'generating_muse'
+                                    ? `Đang tạo Video trên Google Flow (${job.progress}%)`
+                                    : job.status === 'compositing_ffmpeg'
+                                    ? `Hậu kỳ FFmpeg 9:16 (${job.progress}%)`
+                                    : `Đang xếp hàng (${job.progress}%)`}
+                                </span>
+                                {job.status === 'failed' && (
+                                  <button
+                                    type="button"
+                                    onClick={async () => {
+                                      try {
+                                        await api.retryCloneJob(job.id);
+                                        notify(`Đã chạy lại Job #${job.id}!`);
+                                        await refreshAll();
+                                      } catch (err: unknown) {
+                                        notify(err instanceof Error ? err.message : 'Lỗi chạy lại Job', 'err');
+                                      }
+                                    }}
+                                    className="sw-pill-btn px-2 py-0.5 text-[10px] font-bold border"
+                                    style={{ background: 'var(--xanh-bg)', borderColor: 'transparent', color: 'var(--link)' }}
+                                    title="Chạy lại Job này"
+                                  >
+                                    Chạy lại
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    try {
+                                      await api.deleteCloneJob(job.id);
+                                      if (activeCloneJobId === job.id) setActiveCloneJobId(null);
+                                      if (activeFlowJobId === job.id) setActiveFlowJobId(null);
+                                      notify(job.status === 'completed' || job.status === 'failed' ? `Đã xoá Job #${job.id}` : `Đã huỷ Job #${job.id}`);
+                                      await refreshAll();
+                                    } catch (err: unknown) {
+                                      notify(err instanceof Error ? err.message : 'Lỗi xoá Job', 'err');
+                                    }
+                                  }}
+                                  className="p-1 rounded-lg"
+                                  style={{ background: 'var(--do-bg)', color: 'var(--do)' }}
+                                  title={job.status === 'completed' || job.status === 'failed' ? 'Xoá Job' : 'Huỷ tiến trình'}
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
+                              </div>
                             </div>
 
                             {job.status !== 'completed' && (
@@ -2601,6 +4909,1059 @@ export default function App() {
                                   style={{
                                     width: `${job.progress}%`,
                                     background: job.status === 'failed' ? 'var(--do)' : 'var(--xanh)',
+                                  }}
+                                />
+                              </div>
+                            )}
+
+                            {job.error_message && (
+                              <div className="text-[11px]" style={{ color: 'var(--do)' }}>
+                                {job.error_message}
+                              </div>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ==============================================================
+                VIEW 4B: CLONE VIDEO BẰNG GOOGLE FLOW (flow.google.com · VEO 3.1)
+               ============================================================== */}
+            {activeTab === 'clone-flow' && (
+              <div className="space-y-5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h1 className="text-2xl font-bold tracking-tight" style={{ color: 'var(--chu)' }}>
+                        Clone Video bằng Google Flow (flow.google.com)
+                      </h1>
+                      <a
+                        href="https://flow.google.com/"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold flex items-center gap-1 hover:underline"
+                        style={{ background: 'var(--xanh-bg)', color: 'var(--link)' }}
+                      >
+                        flow.google.com
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
+                    <p className="text-xs mt-0.5" style={{ color: 'var(--mo)' }}>
+                      Quản lý kho tài khoản Google Flow (Chrome Cookie / Session / Gemini API) &amp; xoay vòng tự động để Remake Video Viral dọc 9:16 sạch bằng OmniFlash (Omni 1.2 Flash), Veo 3.1 &amp; Nano Banana.
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleFlowBrowserLogin()}
+                      className="sw-pill-btn-primary px-4 py-2 text-xs font-semibold flex items-center gap-1.5"
+                    >
+                      <LogIn className="w-3.5 h-3.5" />
+                      Đăng nhập Acc Flow trên Chrome (Tự lấy Cookie)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowFlowImportModal(true)}
+                      className="sw-pill-btn px-4 py-2 text-xs font-semibold flex items-center gap-1.5 border"
+                      style={{ background: 'var(--nen)', borderColor: 'var(--vien)', color: 'var(--chu)' }}
+                    >
+                      <KeyRound className="w-3.5 h-3.5" style={{ color: 'var(--la)' }} />
+                      + Nhập Cookie / Bearer / Key ({flowAccounts.length} Acc)
+                    </button>
+                  </div>
+                </div>
+
+                {/* Google Flow Pool Telemetry Strip */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <div className="sw-card p-4">
+                    <div className="text-[11px]" style={{ color: 'var(--mo)' }}>
+                      Tài khoản Flow Active
+                    </div>
+                    <div className="text-xl font-bold mt-1" style={{ color: 'var(--la)' }}>
+                      {flowAccounts.filter((a) => a.status === 'active').length} / {flowAccounts.length} acc
+                    </div>
+                  </div>
+                  <div className="sw-card p-4">
+                    <div className="text-[11px]" style={{ color: 'var(--mo)' }}>
+                      Tổng AI Credits ước tính
+                    </div>
+                    <div className="text-xl font-bold mt-1" style={{ color: 'var(--xanh)' }}>
+                      {formatCompact(
+                        flowAccounts.reduce((acc, item) => acc + (item.credits_remaining || 0), 0)
+                      )}{' '}
+                      credits
+                    </div>
+                  </div>
+                  <div className="sw-card p-4">
+                    <div className="text-[11px]" style={{ color: 'var(--mo)' }}>
+                      Lượt Render Flow đã chạy
+                    </div>
+                    <div className="text-xl font-bold mt-1" style={{ color: 'var(--cam)' }}>
+                      {flowAccounts.reduce((s, a) => s + (a.renders_used || 0), 0)} /{' '}
+                      {flowAccounts.reduce((s, a) => s + (a.weekly_limit || 0), 0)}
+                    </div>
+                  </div>
+                  <div className="sw-card p-4">
+                    <div className="text-[11px]" style={{ color: 'var(--mo)' }}>
+                      Jobs Google Flow hoàn tất
+                    </div>
+                    <div className="text-xl font-bold mt-1" style={{ color: 'var(--chu)' }}>
+                      {jobs.filter((j) => j.clone_mode.startsWith('flow_') && j.status === 'completed').length} /{' '}
+                      {jobs.filter((j) => j.clone_mode.startsWith('flow_')).length} jobs
+                    </div>
+                  </div>
+                </div>
+
+                {/* Flow Account Pool Manager Card */}
+                <div className="sw-card p-5 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h2 className="text-sm font-bold flex items-center gap-2" style={{ color: 'var(--chu)' }}>
+                        <ShieldCheck className="w-4 h-4" style={{ color: 'var(--la)' }} />
+                        Kho Tài Khoản Google Flow (http://flow.google.com/)
+                      </h2>
+                      <p className="text-[11px] mt-0.5" style={{ color: 'var(--mo)' }}>
+                        Mỗi tài khoản lưu một Chrome Profile &amp; bộ Cookie riêng biệt. Khi đăng nhập xong trên Chrome, hệ thống tự động thu Cookie và đóng trình duyệt.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <input
+                        value={flowLoginLabel}
+                        onChange={(e) => setFlowLoginLabel(e.target.value)}
+                        placeholder="Ghi chú tên Acc (tuỳ chọn)..."
+                        className="sw-input px-3 py-1.5 text-xs w-44"
+                      />
+                      <input
+                        value={flowLoginProxy}
+                        onChange={(e) => setFlowLoginProxy(e.target.value)}
+                        placeholder="Proxy http://ip:port (tuỳ chọn)"
+                        className="sw-input px-3 py-1.5 text-xs w-48"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleFlowBrowserLogin()}
+                        className="sw-pill-btn px-3 py-1.5 text-xs font-semibold border flex items-center gap-1"
+                        style={{ background: 'var(--la-bg)', borderColor: 'transparent', color: 'var(--la)' }}
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        Thêm &amp; Mở Chrome Login
+                      </button>
+                    </div>
+                  </div>
+
+                  {flowAccounts.length === 0 ? (
+                    <div
+                      className="p-6 rounded-2xl border text-center space-y-2 text-xs"
+                      style={{ background: 'var(--xam)', borderColor: 'var(--vien-nhe)', color: 'var(--mo)' }}
+                    >
+                      <div className="font-bold" style={{ color: 'var(--chu)' }}>
+                        Chưa có tài khoản flow.google.com nào trong kho.
+                      </div>
+                      <p>
+                        Bấm <strong>&ldquo;Đăng nhập Acc Flow trên Chrome&rdquo;</strong> để mở trình duyệt đăng nhập trực tiếp, hoặc bấm <strong>&ldquo;+ Nhập Cookie / Bearer / Key&rdquo;</strong> để nạp nhanh hàng loạt tài khoản.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                      {flowAccounts.map((acc) => (
+                        <div
+                          key={acc.id}
+                          className="p-3.5 rounded-2xl border flex flex-col justify-between gap-2.5 text-xs"
+                          style={{ background: 'var(--xam)', borderColor: 'var(--vien-nhe)' }}
+                        >
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="font-bold truncate" style={{ color: 'var(--chu)' }}>
+                                {acc.email || acc.label}
+                              </div>
+                              <span
+                                className="px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0"
+                                style={{
+                                  background:
+                                    acc.status === 'active'
+                                      ? 'var(--la-bg)'
+                                      : acc.status === 'login_pending'
+                                      ? 'var(--xanh-bg)'
+                                      : 'var(--cam-bg)',
+                                  color:
+                                    acc.status === 'active'
+                                      ? 'var(--la)'
+                                      : acc.status === 'login_pending'
+                                      ? 'var(--link)'
+                                      : 'var(--cam)',
+                                }}
+                              >
+                                {acc.status === 'login_pending' ? 'Đang chờ Login...' : acc.status}
+                              </span>
+                            </div>
+
+                            <div className="text-[11px] flex flex-wrap items-center gap-1.5" style={{ color: 'var(--mo)' }}>
+                              <span className="px-1.5 py-0.5 rounded text-[10px]" style={{ background: 'var(--nen)' }}>
+                                {acc.auth_mode}
+                              </span>
+                              <span>{acc.credential_masked}</span>
+                              <span>
+                                · {acc.renders_used}/{acc.weekly_limit} lượt
+                              </span>
+                            </div>
+
+                            {acc.notes && (
+                              <div className="text-[10px] line-clamp-2 pt-0.5" style={{ color: 'var(--mo2)' }}>
+                                {acc.notes}
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t" style={{ borderColor: 'var(--vien-nhe)' }}>
+                            <button
+                              type="button"
+                              disabled={flowBusyAccId === acc.id}
+                              onClick={() => handleFlowVerify(acc.id)}
+                              className="sw-pill-btn px-2.5 py-1 text-[10px] font-semibold border"
+                              style={{ background: 'var(--nen)', borderColor: 'var(--vien-nhe)', color: 'var(--chu)' }}
+                            >
+                              {flowBusyAccId === acc.id ? 'Đang check...' : 'Kiểm tra'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleFlowBrowserLogin(acc.id)}
+                              className="sw-pill-btn px-2.5 py-1 text-[10px] font-semibold border"
+                              style={{ background: 'var(--xanh-bg)', borderColor: 'transparent', color: 'var(--link)' }}
+                            >
+                              Login lại
+                            </button>
+                            <button
+                              type="button"
+                              disabled={flowBusyAccId === acc.id}
+                              onClick={() => handleFlowOpenBrowser(acc.id)}
+                              className="sw-pill-btn px-2.5 py-1 text-[10px] font-semibold border"
+                              style={{ background: 'var(--nen)', borderColor: 'var(--vien-nhe)', color: 'var(--mo)' }}
+                              title="Mở cửa sổ Chrome của tài khoản này trên flow.google.com"
+                            >
+                              Mở Flow Web
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => api.toggleFlowAccount(acc.id).then(refreshAll)}
+                              className="sw-pill-btn px-2 py-1 text-[10px] font-semibold border"
+                              style={{ background: 'var(--nen)', borderColor: 'var(--vien-nhe)', color: 'var(--mo)' }}
+                            >
+                              {acc.status === 'active' ? 'Tạm dừng' : 'Kích hoạt'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => api.deleteFlowAccount(acc.id).then(refreshAll)}
+                              className="p-1 rounded-lg ml-auto"
+                              style={{ background: 'var(--do-bg)', color: 'var(--do)' }}
+                              title="Xoá tài khoản Flow"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Main Studio Grid: Left Flow Remake Config + Right 9:16 Output & Queue */}
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+                  <div className="lg:col-span-5 sw-card p-5 space-y-4">
+                    <h2 className="text-sm font-bold flex items-center gap-2" style={{ color: 'var(--chu)' }}>
+                      <Film className="w-4 h-4" style={{ color: 'var(--la)' }} />
+                      Studio Clone Video bằng Google Flow (OmniFlash · Veo 3.1 · 9:16)
+                    </h2>
+
+                    <div
+                      className="p-3 rounded-2xl border text-[11px] space-y-1 leading-relaxed"
+                      style={{ background: 'var(--xam)', borderColor: 'var(--vien-nhe)', color: 'var(--mo)' }}
+                    >
+                      <div className="font-bold" style={{ color: 'var(--chu)' }}>
+                        📌 Cách dùng chuẩn 3 bước (không cần bấm rời rạc):
+                      </div>
+                      <div>
+                        <strong>Bước 1:</strong> Chọn Video gốc + Chế độ Clone (khuyên dùng{' '}
+                        <code>Flow Agent + First–End Frame</code>) + Mô hình Flow.
+                      </div>
+                      <div>
+                        <strong>Bước 2:</strong> Bấm 1 nút duy nhất{' '}
+                        <strong style={{ color: 'var(--link)' }}>🎬 Mổ xẻ rea-video &amp; Tự viết Prompt</strong> ở mục 4 — hệ thống tách góc máy bằng <code>rea-video</code>, trích khung <code>Đầu → Cuối</code> sạch chữ &amp; viết Prompt khớp đúng Model.
+                      </div>
+                      <div>
+                        <strong>Bước 3:</strong> Bấm <strong style={{ color: 'var(--la)' }}>Chạy Clone Video bằng Google Flow</strong> để xuất MP4 9:16.
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-semibold mb-1" style={{ color: 'var(--mo)' }}>
+                        1. Chọn Video Viral Gốc cần Clone
+                      </label>
+                      <select
+                        value={selectedVideoId}
+                        onChange={(e) => {
+                          const id = Number(e.target.value);
+                          setSelectedVideoId(id);
+                          const found = videos.find((x) => x.id === id);
+                          if (found) {
+                            setPromptScript(found.hook_text || found.title);
+                            setFlowRefFrameUrl(found.thumbnail_url || '');
+                            setFlowVeoPrompt(found.rea_breakdown?.veo_prompt_en || '');
+                            setFlowScenePlan(found.rea_breakdown?.scene_units || []);
+                          } else {
+                            setFlowVeoPrompt('');
+                            setFlowScenePlan([]);
+                          }
+                        }}
+                        className="sw-input w-full px-3 py-2 text-xs"
+                      >
+                        {videos.map((v) => (
+                          <option key={v.id} value={v.id}>
+                            [{v.platform.toUpperCase()}] #{v.id} — {v.title}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[11px] font-semibold mb-1" style={{ color: 'var(--mo)' }}>
+                          2. Tài khoản Google Flow sử dụng
+                        </label>
+                        <select
+                          value={selectedFlowAccountId}
+                          onChange={(e) => setSelectedFlowAccountId(Number(e.target.value))}
+                          className="sw-input w-full px-3 py-2 text-xs"
+                        >
+                          <option value={0}>⚡ Tự động xoay vòng Acc Active ({flowAccounts.filter((a) => a.status === 'active').length} acc)</option>
+                          {flowAccounts.map((acc) => (
+                            <option key={acc.id} value={acc.id}>
+                              #{acc.id} {acc.email || acc.label} ({acc.status})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-semibold mb-1" style={{ color: 'var(--mo)' }}>
+                          3. Chế độ Clone trên Flow
+                        </label>
+                        <select
+                          value={flowCloneMode}
+                          onChange={(e) => setFlowCloneMode(e.target.value as FlowCloneMode)}
+                          className="sw-input w-full px-3 py-2 text-xs"
+                        >
+                          <option value="flow_agent_auto">
+                            🤖 Google Flow Agent (Tác nhân AI) + Tự dự phòng First–End Frame (Khuyên dùng)
+                          </option>
+                          <option value="flow_frames_start_end">
+                            🎯 First Frame → End Frame 9:16 (Khung đầu – Khung cuối · Giống bản gốc nhất)
+                          </option>
+                          <option value="flow_agent">
+                            ✨ Chỉ dùng Tác nhân Google Flow (Creative Agent thuần)
+                          </option>
+                          <option value="flow_omni_ingredients">
+                            🧩 OmniFlash Thành Phần (Ingredients-to-Video 9:16)
+                          </option>
+                          <option value="flow_veo_t2v">
+                            ✍️ Text-to-Video 9:16 (Dựng mới từ kịch bản)
+                          </option>
+                        </select>
+                        <p className="mt-1 text-[10px] leading-snug" style={{ color: 'var(--mo)' }}>
+                          {flowCloneMode === 'flow_agent_auto'
+                            ? 'Ưu tiên Tác nhân Google Flow với khung Đầu → Cuối; tự dự phòng First–End Frame nếu Agent giới hạn.'
+                            : flowCloneMode === 'flow_frames_start_end'
+                              ? 'Khoá cặp khung Đầu → Cuối sạch chữ trích từ rea-video để giữ bố cục & chuyển động sát bản gốc.'
+                              : flowCloneMode === 'flow_agent'
+                                ? 'Giao toàn bộ cụm cảnh & ảnh tham chiếu cho Tác nhân Google Flow tự đạo diễn.'
+                                : flowCloneMode === 'flow_omni_ingredients'
+                                  ? 'Dùng Ảnh Thành Phần (Ingredients) khoá sản phẩm & bối cảnh theo từng cụm cảnh.'
+                                  : 'Dựng mới hoàn toàn từ kịch bản Text-to-Video 9:16 theo từng cụm cảnh.'}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+                      <div className="sm:col-span-8 space-y-1.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <label className="block text-[11px] font-semibold" style={{ color: 'var(--mo)' }}>
+                            Mô hình Google Flow (OmniFlash / Veo 3.1 / Nano Banana — 9:16)
+                          </label>
+                          <button
+                            type="button"
+                            disabled={syncingFlowModels}
+                            onClick={handleSyncFlowModels}
+                            className="text-[10px] font-semibold flex items-center gap-1 hover:underline"
+                            style={{ color: 'var(--link)' }}
+                            title="Đồng bộ danh sách model mới nhất trực tiếp từ flow.google.com & Gemini API"
+                          >
+                            <RefreshCw className={`w-3 h-3 ${syncingFlowModels ? 'animate-spin' : ''}`} />
+                            {syncingFlowModels ? 'Đang quét model...' : 'Cập nhật Model mới'}
+                          </button>
+                        </div>
+                        <select
+                          value={flowModelId}
+                          onChange={(e) => setFlowModelId(e.target.value)}
+                          className="sw-input w-full px-3 py-2 text-xs font-medium"
+                        >
+                          {groupedFlowModels.map(([groupName, items]) => (
+                            <optgroup key={groupName} label={groupName}>
+                              {items.map((m) => (
+                                <option key={m.id} value={m.id}>
+                                  {m.label}
+                                </option>
+                              ))}
+                            </optgroup>
+                          ))}
+                          <optgroup label="Tuỳ chỉnh nâng cao">
+                            <option value="__custom__">✍️ Nhập mã Model tuỳ chỉnh khác (Flow / Gemini API)...</option>
+                          </optgroup>
+                        </select>
+
+                        {flowModelId === '__custom__' ? (
+                          <input
+                            value={customFlowModelId}
+                            onChange={(e) => setCustomFlowModelId(e.target.value)}
+                            placeholder="Nhập mã model (VD: omni_1_2_flash_15s_portrait hoặc veo-3.1-generate-preview)..."
+                            className="sw-input w-full px-3 py-1.5 text-xs font-mono"
+                          />
+                        ) : (
+                          selectedFlowModelMeta && (
+                            <div className="flex flex-wrap items-center gap-1.5 text-[10px]" style={{ color: 'var(--mo)' }}>
+                              {selectedFlowModelMeta.badge && (
+                                <span
+                                  className="px-1.5 py-0.5 rounded font-bold"
+                                  style={{ background: 'var(--la-bg)', color: 'var(--la)' }}
+                                >
+                                  {selectedFlowModelMeta.badge}
+                                </span>
+                              )}
+                              {selectedFlowModelMeta.duration_hint && (
+                                <span
+                                  className="px-1.5 py-0.5 rounded font-semibold"
+                                  style={{ background: 'var(--xanh-bg)', color: 'var(--link)' }}
+                                >
+                                  Thời lượng: {selectedFlowModelMeta.duration_hint}
+                                </span>
+                              )}
+                              <span className="truncate font-mono opacity-80">ID: {selectedFlowModelMeta.id}</span>
+                            </div>
+                          )
+                        )}
+                      </div>
+
+                      <div className="sm:col-span-4">
+                        <label className="block text-[11px] font-semibold mb-1" style={{ color: 'var(--mo)' }}>
+                          Số biến thể (Batch)
+                        </label>
+                        <input
+                          type="number"
+                          min={1}
+                          max={5}
+                          value={batchCount}
+                          onChange={(e) => setBatchCount(Math.max(1, Math.min(5, Number(e.target.value) || 1)))}
+                          className="sw-input w-full px-3 py-2 text-xs"
+                        />
+                      </div>
+                    </div>
+
+                    {/* OmniFlash / Veo 3.1 Cinematic Prompt Builder + rea-video 1-Click Integration */}
+                    <div className="space-y-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <label className="block text-[11px] font-semibold" style={{ color: 'var(--mo)' }}>
+                          4. Mổ xẻ Góc Máy (rea-video) &amp; Prompt Google Flow 9:16
+                        </label>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <button
+                            type="button"
+                            disabled={Boolean(reaBusyVideoId) || flowGeneratingPrompt || !selectedVideo}
+                            onClick={() => handleReaAndGenerateFlowPrompt(false)}
+                            className="sw-pill-btn px-2.5 py-1 text-[10px] font-bold flex items-center gap-1 border"
+                            style={{ background: 'var(--xanh-bg)', borderColor: 'transparent', color: 'var(--link)' }}
+                            title="Tự động chạy rea-video mổ xẻ các shot góc máy (nếu chưa mổ xẻ) rồi viết luôn Prompt tối ưu theo Model đang chọn"
+                          >
+                            <Scissors className="w-3 h-3" />
+                            {reaBusyVideoId === selectedVideo?.id
+                              ? '1/2 Đang mổ xẻ Shot (rea-video)...'
+                              : flowGeneratingPrompt
+                              ? '2/2 Đang viết Prompt theo Model...'
+                              : '🎬 Mổ xẻ rea-video & Tự viết Prompt'}
+                          </button>
+
+                          {selectedVideo?.rea_breakdown && (
+                            <button
+                              type="button"
+                              disabled={Boolean(reaBusyVideoId) || flowGeneratingPrompt}
+                              onClick={() => handleGenerateFlowVeoPrompt()}
+                              className="sw-pill-btn px-2 py-1 text-[10px] font-bold flex items-center gap-1"
+                              style={{ background: 'var(--la-bg)', color: 'var(--la)' }}
+                              title="Dùng lại các shot rea-video đã mổ xẻ để đổi lại Prompt khi bạn vừa đổi sang Model khác (nhanh hơn, không cần mổ xẻ lại)"
+                            >
+                              <Sparkles className="w-3 h-3" />
+                              Đổi theo Model mới
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {selectedVideo?.rea_breakdown && (
+                        <div
+                          className="px-3 py-2 rounded-xl border text-[11px] flex flex-wrap items-center justify-between gap-2"
+                          style={{ background: 'var(--la-bg)', borderColor: 'var(--vien-nhe)', color: 'var(--chu)' }}
+                        >
+                          <div className="min-w-0 flex-1 truncate">
+                            <strong style={{ color: 'var(--la)' }}>
+                              ✓ Đã mổ xẻ {selectedVideo.rea_breakdown.shots_count} shots ({selectedVideo.rea_breakdown.duration.toFixed(1)}s):
+                            </strong>{' '}
+                            <span style={{ color: 'var(--mo)' }}>{selectedVideo.rea_breakdown.verdict}</span>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            {(selectedVideo.rea_report_url || selectedVideo.rea_breakdown.report_url) && (
+                              <a
+                                href={selectedVideo.rea_report_url || selectedVideo.rea_breakdown.report_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-[10px] font-bold hover:underline flex items-center gap-0.5"
+                                style={{ color: 'var(--link)' }}
+                              >
+                                Report HTML <ExternalLink className="w-2.5 h-2.5" />
+                              </a>
+                            )}
+                            <button
+                              type="button"
+                              disabled={Boolean(reaBusyVideoId) || flowGeneratingPrompt}
+                              onClick={() => handleReaAndGenerateFlowPrompt(true)}
+                              className="text-[10px] font-semibold hover:underline"
+                              style={{ color: 'var(--mo)' }}
+                              title="Chạy mổ xẻ rea-video lại từ đầu cho video này"
+                            >
+                              Mổ xẻ lại
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Multi-scene rea-video Execution Plan (Ingredients + Per-Scene Prompt + Exact Beat Cut) */}
+                      {(flowScenePlan.length > 0 || (selectedVideo?.rea_breakdown?.scene_units && selectedVideo.rea_breakdown.scene_units.length > 0)) ? (
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between text-[11px]">
+                            <span className="font-bold" style={{ color: 'var(--chu)' }}>
+                              🎞️ Kế Hoạch Cụm Cảnh theo rea-video ({(flowScenePlan.length > 0 ? flowScenePlan : selectedVideo?.rea_breakdown?.scene_units || []).length} cảnh → tự ghép thành 1 video)
+                            </span>
+                            <span className="text-[10px] font-semibold" style={{ color: 'var(--la)' }}>
+                              {flowCloneMode === 'flow_frames_start_end' || flowCloneMode === 'flow_agent_auto'
+                                ? 'Khoá khung Đầu → Cuối sạch · Cắt đúng thời lượng'
+                                : 'Khoá cứng Ảnh SP sạch · Cắt đúng thời lượng'}
+                            </span>
+                          </div>
+                          <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                            {(flowScenePlan.length > 0 ? flowScenePlan : selectedVideo?.rea_breakdown?.scene_units || []).map((sc, idx) => {
+                              const startFrameSrc =
+                                sc.start_frame_url || sc.ref_url || flowRefFrameUrl || selectedVideo?.thumbnail_url;
+                              const endFrameSrc = sc.end_frame_url;
+                              const useFramesPrompt =
+                                flowCloneMode === 'flow_frames_start_end' || flowCloneMode === 'flow_agent_auto';
+                              const scenePromptValue = useFramesPrompt
+                                ? sc.frames_prompt_en || sc.flow_prompt_en
+                                : sc.flow_prompt_en;
+
+                              return (
+                                <div
+                                  key={sc.unit_index || idx}
+                                  className="p-2.5 rounded-xl border space-y-1.5"
+                                  style={{ background: 'var(--xam)', borderColor: 'var(--vien-nhe)' }}
+                                >
+                                  <div className="flex items-center justify-between gap-2 text-[11px]">
+                                    <span className="font-bold truncate" style={{ color: 'var(--chu)' }}>
+                                      {sc.title_vi}
+                                    </span>
+                                    <div className="flex items-center gap-1.5 shrink-0">
+                                      {sc.same_scene_as_prev && (
+                                        <span
+                                          className="px-1.5 py-0.5 rounded text-[9px] font-bold"
+                                          style={{ background: 'var(--xanh-bg)', color: 'var(--link)' }}
+                                          title="Tự nối ảnh cuối cảnh trước làm tham chiếu để giữ đồng nhất bàn/tay/điện thoại"
+                                        >
+                                          Nối mạch cảnh trước
+                                        </span>
+                                      )}
+                                      <span
+                                        className="px-2 py-0.5 rounded-full text-[10px] font-bold"
+                                        style={{ background: 'var(--la-bg)', color: 'var(--la)' }}
+                                      >
+                                        {sc.target_duration.toFixed(1)}s
+                                      </span>
+                                    </div>
+                                  </div>
+                                  {sc.action_vi && (
+                                    <div className="text-[10px]" style={{ color: 'var(--mo)' }}>
+                                      Hành động: {sc.action_vi}
+                                    </div>
+                                  )}
+                                  <div className="flex gap-2">
+                                    {flowCloneMode !== 'flow_veo_t2v' && (startFrameSrc || endFrameSrc) && (
+                                      endFrameSrc ? (
+                                        <div className="flex items-center gap-1 shrink-0">
+                                          {startFrameSrc && (
+                                            <div
+                                              className="relative w-11 h-16 rounded-lg overflow-hidden bg-black shrink-0 border"
+                                              style={{ borderColor: 'var(--vien-nhe)' }}
+                                              title="Khung đầu (First Frame) sạch trích từ rea-video"
+                                            >
+                                              <img
+                                                src={startFrameSrc}
+                                                alt={`Scene ${idx + 1} start frame`}
+                                                className="w-full h-full object-cover"
+                                              />
+                                              <span className="absolute bottom-0 inset-x-0 bg-black/75 text-white text-[9px] font-bold text-center leading-tight py-0.5">
+                                                Đầu
+                                              </span>
+                                            </div>
+                                          )}
+                                          <span className="text-[10px] font-bold shrink-0" style={{ color: 'var(--mo)' }}>
+                                            →
+                                          </span>
+                                          <div
+                                            className="relative w-11 h-16 rounded-lg overflow-hidden bg-black shrink-0 border"
+                                            style={{ borderColor: 'var(--vien-nhe)' }}
+                                            title="Khung cuối (End Frame) sạch trích từ rea-video"
+                                          >
+                                            <img
+                                              src={endFrameSrc}
+                                              alt={`Scene ${idx + 1} end frame`}
+                                              className="w-full h-full object-cover"
+                                            />
+                                            <span className="absolute bottom-0 inset-x-0 bg-black/75 text-white text-[9px] font-bold text-center leading-tight py-0.5">
+                                              Cuối
+                                            </span>
+                                          </div>
+                                        </div>
+                                      ) : (
+                                        startFrameSrc && (
+                                          <div
+                                            className="w-12 h-16 rounded-lg overflow-hidden bg-black shrink-0 border"
+                                            style={{ borderColor: 'var(--vien-nhe)' }}
+                                            title="Ảnh Sản Phẩm Sạch khoá cố định làm Thành phần cho cảnh này"
+                                          >
+                                            <img
+                                              src={startFrameSrc}
+                                              alt={`Scene ${idx + 1} ref`}
+                                              className="w-full h-full object-cover"
+                                            />
+                                          </div>
+                                        )
+                                      )
+                                    )}
+                                    <textarea
+                                      rows={2}
+                                      value={scenePromptValue}
+                                      onChange={(e) => {
+                                        const nextVal = e.target.value;
+                                        const baseList =
+                                          flowScenePlan.length > 0
+                                            ? [...flowScenePlan]
+                                            : [...(selectedVideo?.rea_breakdown?.scene_units || [])];
+                                        baseList[idx] = useFramesPrompt
+                                          ? { ...baseList[idx], frames_prompt_en: nextVal, flow_prompt_en: nextVal }
+                                          : { ...baseList[idx], flow_prompt_en: nextVal };
+                                        setFlowScenePlan(baseList);
+                                      }}
+                                      className="sw-input flex-1 p-2 text-[11px] leading-snug"
+                                    />
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex gap-3">
+                          {flowCloneMode !== 'flow_veo_t2v' && (flowRefFrameUrl || selectedVideo?.thumbnail_url) && (
+                            <div className="w-20 h-32 rounded-xl overflow-hidden bg-black shrink-0 border" style={{ borderColor: 'var(--vien-nhe)' }}>
+                              <img
+                                src={flowRefFrameUrl || selectedVideo?.thumbnail_url}
+                                alt="Reference frame"
+                                className="w-full h-full object-cover"
+                              />
+                            </div>
+                          )}
+                          <textarea
+                            rows={4}
+                            value={flowVeoPrompt}
+                            onChange={(e) => setFlowVeoPrompt(e.target.value)}
+                            placeholder="Bấm '🎬 Mổ xẻ rea-video & Tự viết Prompt' ở góc trên phải để lập Kế Hoạch Cụm Cảnh & Ảnh Thành Phần sạch theo đúng kịch bản rea-video..."
+                            className="sw-input flex-1 p-3 text-xs leading-relaxed"
+                          />
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[11px] font-semibold mb-1" style={{ color: 'var(--mo)' }}>
+                          Hiển thị trên Video
+                        </label>
+                        <select
+                          value={ctaPosition}
+                          onChange={(e) => setCtaPosition(e.target.value)}
+                          className="sw-input w-full px-3 py-2 text-xs"
+                        >
+                          <option value="clean_organic">Sạch 100% (Không khung / Không chữ)</option>
+                          <option value="hook_3s_only">Hiện Hook 3s đầu (Kiểu Creator)</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-semibold mb-1" style={{ color: 'var(--mo)' }}>
+                          Điều hướng Link (Comment / Bio)
+                        </label>
+                        <select
+                          value={selectedProductId}
+                          onChange={(e) => setSelectedProductId(Number(e.target.value))}
+                          className="sw-input w-full px-3 py-2 text-xs"
+                        >
+                          <option value={0}>-- Không gắn SP (Organic thuần) --</option>
+                          {products.map((p) => (
+                            <option key={p.id} value={p.id}>
+                              #{p.code} — {p.name} ({p.price})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    {ctaPosition === 'hook_3s_only' && (
+                      <div>
+                        <label className="block text-[11px] font-semibold mb-1" style={{ color: 'var(--mo)' }}>
+                          Câu Hook hiển thị 3 giây đầu
+                        </label>
+                        <input
+                          value={promptScript}
+                          onChange={(e) => setPromptScript(e.target.value)}
+                          placeholder="Nhập câu Hook 3 giây đầu..."
+                          className="sw-input w-full px-3 py-2 text-xs"
+                        />
+                      </div>
+                    )}
+
+                    <label className="flex items-center gap-2 text-xs cursor-pointer" style={{ color: 'var(--chu)' }}>
+                      <input
+                        type="checkbox"
+                        checked={antiDuplicate}
+                        onChange={(e) => setAntiDuplicate(e.target.checked)}
+                        className="rounded"
+                      />
+                      Bật hậu kỳ FFmpeg 9:16 Anti-Duplicate (Micro-Crop + Chỉnh màu + Xoá Metadata)
+                    </label>
+
+                    <button
+                      type="button"
+                      onClick={handleLaunchFlowClone}
+                      disabled={isLaunchingClone}
+                      className="sw-pill-btn-primary w-full py-3 text-sm font-semibold flex items-center justify-center gap-2"
+                    >
+                      <Film className="w-4 h-4" />
+                      {isLaunchingClone
+                        ? 'Đang gửi sang Google Flow...'
+                        : `Chạy Clone Video bằng Google Flow ${batchCount > 1 ? `(${batchCount}x)` : ''}`}
+                    </button>
+                  </div>
+
+                  {/* Right: 9:16 Player + Google Flow Render Queue */}
+                  <div className="lg:col-span-7 sw-card p-5 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <h2 className="text-sm font-bold" style={{ color: 'var(--chu)' }}>
+                        Kết Quả Render Google Flow &amp; Hàng Đợi ({jobs.filter((j) => j.clone_mode.startsWith('flow_')).length} Flow jobs)
+                      </h2>
+                      <button
+                        onClick={refreshAll}
+                        className="text-xs flex items-center gap-1 font-medium"
+                        style={{ color: 'var(--link)' }}
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" /> Làm mới
+                      </button>
+                    </div>
+
+                    {activeFlowJob && (activeFlowJob.output_video_url || (activeFlowJob.scene_plan && activeFlowJob.scene_plan.length > 0)) && (
+                      <div
+                        className="p-4 rounded-2xl border space-y-3"
+                        style={{ background: 'var(--xam)', borderColor: 'var(--vien-nhe)' }}
+                      >
+                        <div className="grid grid-cols-1 sm:grid-cols-12 gap-4">
+                          <div className="sm:col-span-5 bg-black rounded-2xl overflow-hidden aspect-[9/16] max-h-72 mx-auto w-full flex items-center justify-center">
+                            {(previewFlowClipUrl || activeFlowJob.output_video_url || activeFlowJob.scene_plan?.find((s) => s.clip_url)?.clip_url) ? (
+                              <video
+                                key={`${activeFlowJob.id}-${previewFlowClipUrl || activeFlowJob.output_video_url || activeFlowJob.scene_plan?.find((s) => s.clip_url)?.clip_url}`}
+                                src={previewFlowClipUrl || activeFlowJob.output_video_url || activeFlowJob.scene_plan?.find((s) => s.clip_url)?.clip_url || ''}
+                                controls
+                                playsInline
+                                className="w-full h-full object-contain"
+                              />
+                            ) : (
+                              <div className="p-4 text-center text-[11px] text-white/80 space-y-1">
+                                <RefreshCw className="w-5 h-5 mx-auto animate-spin" />
+                                <div>Đang tạo các cảnh thành phần trên Google Flow ({activeFlowJob.progress}%)...</div>
+                              </div>
+                            )}
+                          </div>
+                          <div className="sm:col-span-7 flex flex-col justify-between gap-3 text-xs">
+                            <div className="space-y-2">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="font-bold">Job #{activeFlowJob.id}</span>
+                                <span
+                                  className="px-2 py-0.5 rounded-full text-[10px] font-bold"
+                                  style={{
+                                    background: activeFlowJob.status === 'completed' ? 'var(--la-bg)' : 'var(--cam-bg)',
+                                    color: activeFlowJob.status === 'completed' ? 'var(--la)' : 'var(--cam)',
+                                  }}
+                                >
+                                  {activeFlowJob.status === 'completed'
+                                    ? 'Hoàn tất · Video Ghép 9:16'
+                                    : `Đang chạy (${activeFlowJob.progress}%)`}
+                                </span>
+                                {activeFlowJob.muse_token_label && (
+                                  <span
+                                    className="px-2 py-0.5 rounded-full text-[10px] font-semibold"
+                                    style={{ background: 'var(--xanh-bg)', color: 'var(--link)' }}
+                                  >
+                                    {activeFlowJob.muse_token_label}
+                                  </span>
+                                )}
+                                {(!activeFlowJob.scene_plan || activeFlowJob.scene_plan.length === 0) && activeFlowEngineBadge && (
+                                  <span
+                                    className="px-2 py-0.5 rounded-full text-[10px] font-bold border"
+                                    style={{
+                                      background: activeFlowEngineBadge.bg,
+                                      borderColor: 'var(--vien-nhe)',
+                                      color: activeFlowEngineBadge.color,
+                                    }}
+                                    title={activeFlowEngineBadge.title}
+                                  >
+                                    {activeFlowEngineBadge.label}
+                                  </span>
+                                )}
+                              </div>
+
+                              {activeFlowJob.scene_plan && activeFlowJob.scene_plan.length > 0 && (
+                                <div className="p-2.5 rounded-xl border space-y-1.5" style={{ background: 'var(--nen)', borderColor: 'var(--vien-nhe)' }}>
+                                  <div className="text-[10px] font-bold flex items-center justify-between" style={{ color: 'var(--mo)' }}>
+                                    <span>Các Cảnh Thành Phần đã tạo &amp; ghép ({activeFlowJob.scene_plan.length} cảnh)</span>
+                                    <span>Bấm để xem từng cảnh</span>
+                                  </div>
+                                  <div className="flex flex-wrap items-center gap-1.5">
+                                    {activeFlowEngineBadge && (
+                                      <span
+                                        className="px-2.5 py-1 rounded-lg text-[10px] font-bold border"
+                                        style={{
+                                          background: activeFlowEngineBadge.bg,
+                                          borderColor: 'var(--vien-nhe)',
+                                          color: activeFlowEngineBadge.color,
+                                        }}
+                                        title={activeFlowEngineBadge.title}
+                                      >
+                                        {activeFlowEngineBadge.label}
+                                      </span>
+                                    )}
+                                    {activeFlowJob.output_video_url && (
+                                      <button
+                                        type="button"
+                                        onClick={() => setPreviewFlowClipUrl('')}
+                                        className="px-2.5 py-1 rounded-lg text-[10px] font-bold border transition"
+                                        style={{
+                                          background: !previewFlowClipUrl ? 'var(--la-bg)' : 'var(--xam)',
+                                          borderColor: !previewFlowClipUrl ? 'var(--la)' : 'var(--vien-nhe)',
+                                          color: !previewFlowClipUrl ? 'var(--la)' : 'var(--chu)',
+                                        }}
+                                      >
+                                        🎬 Video Ghép Hoàn Chỉnh
+                                      </button>
+                                    )}
+                                    {activeFlowJob.scene_plan.map((sc) => {
+                                      const isSel = Boolean(sc.clip_url && previewFlowClipUrl === sc.clip_url);
+                                      const stBadge =
+                                        sc.status === 'done'
+                                          ? '✓'
+                                          : sc.status === 'generating'
+                                          ? '⏳'
+                                          : sc.status === 'failed'
+                                          ? '✕'
+                                          : '•';
+                                      return (
+                                        <button
+                                          key={sc.unit_index}
+                                          type="button"
+                                          disabled={!sc.clip_url}
+                                          onClick={() => sc.clip_url && setPreviewFlowClipUrl(sc.clip_url)}
+                                          className="px-2 py-1 rounded-lg text-[10px] font-semibold border transition disabled:opacity-60"
+                                          style={{
+                                            background: isSel ? 'var(--xanh-bg)' : 'var(--xam)',
+                                            borderColor: isSel ? 'var(--xanh)' : 'var(--vien-nhe)',
+                                            color: isSel ? 'var(--link)' : 'var(--chu)',
+                                          }}
+                                          title={sc.engine_used ? `${sc.title_vi} · Engine: ${sc.engine_used}` : sc.title_vi}
+                                        >
+                                          {stBadge} Cảnh {sc.unit_index} ({sc.target_duration.toFixed(1)}s)
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              )}
+
+                              {activeFlowJob.veo_prompt && (
+                                <div className="p-2.5 rounded-xl border" style={{ background: 'var(--nen)', borderColor: 'var(--vien-nhe)' }}>
+                                  <div className="text-[10px] font-semibold mb-0.5" style={{ color: 'var(--mo)' }}>
+                                    Kịch bản Prompt theo Cụm Cảnh rea-video
+                                  </div>
+                                  <p className="line-clamp-3 whitespace-pre-line text-[11px]">{activeFlowJob.veo_prompt}</p>
+                                </div>
+                              )}
+                            </div>
+
+                            {activeFlowJob.output_video_url && (
+                              <div className="flex flex-wrap gap-2">
+                                <a
+                                  href={activeFlowJob.output_video_url}
+                                  download={`flow_clone_${activeFlowJob.id}.mp4`}
+                                  className="sw-pill-btn px-3.5 py-2 text-xs font-semibold border flex items-center gap-1.5"
+                                  style={{ background: 'var(--nen)', borderColor: 'var(--vien)', color: 'var(--chu)' }}
+                                >
+                                  <Download className="w-3.5 h-3.5" /> Tải Video Hoàn Chỉnh
+                                </a>
+                                <button
+                                  onClick={() => {
+                                    setPubJobId(activeFlowJob.id);
+                                    setActiveTab('dang-bai');
+                                  }}
+                                  className="sw-pill-btn-primary flex-1 px-3.5 py-2 text-xs flex items-center justify-center gap-1.5"
+                                >
+                                  <Send className="w-3.5 h-3.5" /> Đưa sang Đăng Bài &amp; Auto-Comment
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="space-y-2.5 max-h-[380px] overflow-y-auto pr-1">
+                      {flowJobs.length === 0 ? (
+                        <div className="py-10 text-center text-xs" style={{ color: 'var(--mo)' }}>
+                          Chưa có tiến trình nào. Hãy thêm tài khoản Google Flow và bấm &ldquo;Chạy Clone Video bằng Google Flow&rdquo;!
+                        </div>
+                      ) : (
+                        flowJobs.map((job) => (
+                          <div
+                            key={job.id}
+                            onClick={() => setActiveFlowJobId(job.id)}
+                            className="p-3 rounded-2xl border cursor-pointer transition space-y-2"
+                            style={{
+                              background: activeFlowJob?.id === job.id ? 'var(--xanh-bg)' : 'var(--xam)',
+                              borderColor: activeFlowJob?.id === job.id ? 'var(--xanh)' : 'var(--vien-nhe)',
+                            }}
+                          >
+                            <div className="flex items-center justify-between gap-2 text-xs">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span className="font-bold">Job #{job.id}</span>
+                                <span
+                                  className="px-2 py-0.5 rounded-full text-[10px] font-semibold"
+                                  style={{
+                                    background: job.clone_mode.startsWith('flow_') ? 'var(--la-bg)' : 'var(--nen)',
+                                    color: job.clone_mode.startsWith('flow_') ? 'var(--la)' : 'var(--mo)',
+                                  }}
+                                >
+                                  {job.clone_mode.startsWith('flow_') ? 'Google Flow' : job.clone_mode}
+                                </span>
+                                {job.muse_token_label && (
+                                  <span className="text-[11px] truncate" style={{ color: 'var(--link)' }}>
+                                    {job.muse_token_label}
+                                  </span>
+                                )}
+                                <span className="truncate" style={{ color: 'var(--mo)' }}>
+                                  {job.source_title || job.prompt_script}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-1.5 shrink-0" onClick={(e) => e.stopPropagation()}>
+                                <span
+                                  className="px-2.5 py-0.5 rounded-full text-[10px] font-bold"
+                                  style={{
+                                    background:
+                                      job.status === 'completed'
+                                        ? 'var(--la-bg)'
+                                        : job.status === 'failed'
+                                        ? 'var(--do-bg)'
+                                        : 'var(--cam-bg)',
+                                    color:
+                                      job.status === 'completed'
+                                        ? 'var(--la)'
+                                        : job.status === 'failed'
+                                        ? 'var(--do)'
+                                        : 'var(--cam)',
+                                  }}
+                                >
+                                  {job.status === 'completed'
+                                    ? 'Hoàn tất (100%)'
+                                    : job.status === 'failed'
+                                    ? `Thất bại (${job.progress}%)`
+                                    : job.status === 'analyzing'
+                                    ? `Đang chuẩn bị Frame & Prompt (${job.progress}%)`
+                                    : job.status === 'generating_muse'
+                                    ? `Đang tạo Video trên Google Flow (${job.progress}%)`
+                                    : job.status === 'compositing_ffmpeg'
+                                    ? `Hậu kỳ FFmpeg 9:16 (${job.progress}%)`
+                                    : `Đang xếp hàng (${job.progress}%)`}
+                                </span>
+                                {job.status === 'failed' && (
+                                  <button
+                                    type="button"
+                                    onClick={async () => {
+                                      try {
+                                        await api.retryCloneJob(job.id);
+                                        notify(`Đã chạy lại Job #${job.id}!`);
+                                        await refreshAll();
+                                      } catch (err: unknown) {
+                                        notify(err instanceof Error ? err.message : 'Lỗi chạy lại Job', 'err');
+                                      }
+                                    }}
+                                    className="sw-pill-btn px-2 py-0.5 text-[10px] font-bold border"
+                                    style={{ background: 'var(--xanh-bg)', borderColor: 'transparent', color: 'var(--link)' }}
+                                    title="Chạy lại Job này"
+                                  >
+                                    Chạy lại
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    try {
+                                      await api.deleteCloneJob(job.id);
+                                      if (activeCloneJobId === job.id) setActiveCloneJobId(null);
+                                      if (activeFlowJobId === job.id) setActiveFlowJobId(null);
+                                      notify(job.status === 'completed' || job.status === 'failed' ? `Đã xoá Job #${job.id}` : `Đã huỷ Job #${job.id}`);
+                                      await refreshAll();
+                                    } catch (err: unknown) {
+                                      notify(err instanceof Error ? err.message : 'Lỗi xoá Job', 'err');
+                                    }
+                                  }}
+                                  className="p-1 rounded-lg"
+                                  style={{ background: 'var(--do-bg)', color: 'var(--do)' }}
+                                  title={job.status === 'completed' || job.status === 'failed' ? 'Xoá Job' : 'Huỷ tiến trình'}
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
+                              </div>
+                            </div>
+
+                            {job.status !== 'completed' && (
+                              <div className="w-full h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--o)' }}>
+                                <div
+                                  className="h-full transition-all duration-300"
+                                  style={{
+                                    width: `${job.progress}%`,
+                                    background: job.status === 'failed' ? 'var(--do)' : 'var(--la)',
                                   }}
                                 />
                               </div>
@@ -2880,7 +6241,7 @@ export default function App() {
                         )}
                         {completedJobs.map((j) => (
                           <option key={j.id} value={j.id}>
-                            Job #{j.id} — #{j.product_code} {j.product_name}
+                            Job #{j.id} — {j.product_code ? `#${j.product_code} ${j.product_name}` : `Organic Viral (${j.source_title || j.clone_mode})`}
                           </option>
                         ))}
                       </select>
@@ -3013,31 +6374,58 @@ export default function App() {
             )}
 
             {/* ==============================================================
-                VIEW 7: CÀI ĐẶT API (treg.to) & KIẾN TRÚC RUST ANALYSIS
+                VIEW 7: CÀI ĐẶT AGENT-REACH, REA-VIDEO & HỆ THỐNG
                ============================================================== */}
             {activeTab === 'cai-dat' && (
               <div className="space-y-5">
-                <div>
-                  <h1 className="text-2xl font-bold tracking-tight" style={{ color: 'var(--chu)' }}>
-                    Cài đặt Hệ thống, treg.to API & Đánh giá Rust
-                  </h1>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h1 className="text-2xl font-bold tracking-tight" style={{ color: 'var(--chu)' }}>
+                      Cài đặt Agent-Reach, rea-video &amp; Hệ thống
+                    </h1>
+                    <p className="text-xs mt-1" style={{ color: 'var(--mo)' }}>
+                      Quản lý đăng nhập đa nền tảng qua trình duyệt riêng của Agent-Reach, cấu hình VLM cho rea-video và /bio.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={loadAgentReachStatus}
+                    disabled={arLoading}
+                    className="sw-pill-btn px-4 py-2 text-xs font-bold border flex items-center gap-1.5"
+                    style={{ background: 'var(--xam)', borderColor: 'var(--vien-nhe)', color: 'var(--chu)' }}
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${arLoading ? 'animate-spin' : ''}`} />
+                    {arLoading ? 'Đang kiểm tra Agent-Reach...' : 'Làm mới trạng thái Agent-Reach'}
+                  </button>
                 </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
                   <div className="lg:col-span-6 sw-card p-5 space-y-4">
                     <h2 className="text-sm font-bold flex items-center gap-2">
                       <Activity className="w-4 h-4" style={{ color: 'var(--xanh)' }} />
-                      Trạng thái Engine Local
+                      Trạng thái Engine Local (6 Module)
                     </h2>
                     <div className="grid grid-cols-2 gap-3 text-xs">
                       {[
+                        {
+                          name: 'Agent-Reach CLI',
+                          ok: status?.agent_reach_installed,
+                          detail: status?.agent_reach_installed
+                            ? `v${arStatus?.version || '1.6.1'} · Multi-Social`
+                            : 'Chưa cài agent-reach',
+                        },
+                        {
+                          name: 'rea-video Decomposer',
+                          ok: status?.rea_video_installed,
+                          detail: status?.rea_video_installed ? 'Shot-by-Shot & VLM' : 'Chưa tìm thấy CLI',
+                        },
                         { name: 'FFmpeg Video Composer', ok: status?.ffmpeg_installed, detail: '9:16 + CTA Overlay' },
-                        { name: 'yt-dlp Downloader', ok: status?.ytdlp_installed, detail: 'IG / FB / Threads' },
-                        { name: 'Playwright Headless', ok: status?.playwright_installed, detail: 'Free Meta Ads Crawl' },
+                        { name: 'yt-dlp Downloader', ok: status?.ytdlp_installed, detail: 'YT / Bili / XHS / IG / FB' },
+                        { name: 'Playwright Headless', ok: status?.playwright_installed, detail: 'Meta Ads / Browser' },
                         {
                           name: 'Crawl4AI Engine',
                           ok: status?.crawl4ai_installed,
-                          detail: status?.crawl4ai_installed ? 'Native' : 'Playwright Fallback',
+                          detail: status?.crawl4ai_installed ? 'Native' : 'Agent-Reach / PW Fallback',
                         },
                       ].map((item, idx) => (
                         <div
@@ -3045,13 +6433,13 @@ export default function App() {
                           className="p-3 rounded-2xl border"
                           style={{ background: 'var(--xam)', borderColor: 'var(--vien-nhe)' }}
                         >
-                          <div className="font-bold flex items-center justify-between">
-                            <span>{item.name}</span>
+                          <div className="font-bold flex items-center justify-between gap-1">
+                            <span className="truncate">{item.name}</span>
                             <span style={{ color: item.ok ? 'var(--la)' : 'var(--cam)' }}>
                               {item.ok ? 'READY' : 'FALLBACK'}
                             </span>
                           </div>
-                          <div className="text-[11px] mt-1" style={{ color: 'var(--mo)' }}>
+                          <div className="text-[11px] mt-1 truncate" style={{ color: 'var(--mo)' }}>
                             {item.detail}
                           </div>
                         </div>
@@ -3059,30 +6447,33 @@ export default function App() {
                     </div>
 
                     <div className="pt-3 border-t space-y-3" style={{ borderColor: 'var(--vien-nhe)' }}>
-                      <h3 className="text-sm font-bold">Cấu hình /bio & treg.to API Key (Tuỳ chọn)</h3>
-                      <div>
-                        <label className="block text-[11px] font-semibold mb-1" style={{ color: 'var(--mo)' }}>
-                          Tên Shop / Kênh trên Trang /bio
-                        </label>
-                        <input
-                          value={bioBrandName}
-                          onChange={(e) => setBioBrandName(e.target.value)}
-                          className="sw-input w-full px-3 py-2 text-xs"
-                        />
+                      <h3 className="text-sm font-bold">Cấu hình /bio, rea-video VLM &amp; treg.to API</h3>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-[11px] font-semibold mb-1" style={{ color: 'var(--mo)' }}>
+                            Tên Shop / Kênh trên Trang /bio
+                          </label>
+                          <input
+                            value={bioBrandName}
+                            onChange={(e) => setBioBrandName(e.target.value)}
+                            className="sw-input w-full px-3 py-2 text-xs"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-semibold mb-1" style={{ color: 'var(--mo)' }}>
+                            Mô tả ngắn trên Trang /bio
+                          </label>
+                          <input
+                            value={bioBrandSub}
+                            onChange={(e) => setBioBrandSub(e.target.value)}
+                            className="sw-input w-full px-3 py-2 text-xs"
+                          />
+                        </div>
                       </div>
+
                       <div>
                         <label className="block text-[11px] font-semibold mb-1" style={{ color: 'var(--mo)' }}>
-                          Mô tả ngắn trên Trang /bio
-                        </label>
-                        <input
-                          value={bioBrandSub}
-                          onChange={(e) => setBioBrandSub(e.target.value)}
-                          className="sw-input w-full px-3 py-2 text-xs"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[11px] font-semibold mb-1" style={{ color: 'var(--mo)' }}>
-                          treg.to API Key (Bỏ trống nếu dùng 100% Crawl4AI / Playwright Free)
+                          treg.to API Key (Tuỳ chọn — bỏ trống nếu dùng Agent-Reach / Playwright Free)
                         </label>
                         <input
                           type="password"
@@ -3092,6 +6483,147 @@ export default function App() {
                           className="sw-input w-full px-3 py-2 text-xs"
                         />
                       </div>
+
+                      <div
+                        className="p-3.5 rounded-2xl border space-y-3"
+                        style={{ background: 'var(--xam)', borderColor: 'var(--vien-nhe)' }}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-bold flex items-center gap-1.5">
+                            <Scissors className="w-3.5 h-3.5" style={{ color: 'var(--link)' }} />
+                            Cấu hình rea-video (Shot-by-Shot &amp; VLM)
+                          </span>
+                          <label className="flex items-center gap-1.5 text-[11px] font-semibold cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={reaVlmEnabled === '1'}
+                              onChange={(e) => setReaVlmEnabled(e.target.checked ? '1' : '0')}
+                              className="rounded"
+                            />
+                            Bật VLM (--vlm)
+                          </label>
+                        </div>
+
+                        <div>
+                          <label className="block text-[10px] font-semibold mb-1" style={{ color: 'var(--mo)' }}>
+                            1. VLM Base URL (Endpoint OpenAI-compatible / Gemini / Proxy)
+                          </label>
+                          <input
+                            value={reaVlmBaseUrl}
+                            onChange={(e) => setReaVlmBaseUrl(e.target.value)}
+                            placeholder="https://api.openai.com/v1 hoặc https://your-proxy.com/v1"
+                            className="sw-input w-full px-3 py-1.5 text-xs"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-[10px] font-semibold mb-1" style={{ color: 'var(--mo)' }}>
+                            2. API Key &amp; Tự động Fetch danh sách Model
+                          </label>
+                          <div className="flex flex-wrap gap-2">
+                            <input
+                              type="password"
+                              value={reaVlmApiKey}
+                              onChange={(e) => setReaVlmApiKey(e.target.value)}
+                              placeholder="sk-... hoặc AIza... (API Key của endpoint)"
+                              className="sw-input flex-1 min-w-[180px] px-3 py-1.5 text-xs"
+                            />
+                            <button
+                              type="button"
+                              disabled={vlmFetchingModels}
+                              onClick={handleFetchReaVlmModels}
+                              className="sw-pill-btn px-3.5 py-1.5 text-xs font-bold flex items-center gap-1.5 shrink-0"
+                              style={{ background: 'var(--xanh-bg)', color: 'var(--link)' }}
+                            >
+                              <RefreshCw className={`w-3.5 h-3.5 ${vlmFetchingModels ? 'animate-spin' : ''}`} />
+                              {vlmFetchingModels ? 'Đang Fetch...' : 'Fetch Models'}
+                            </button>
+                          </div>
+                        </div>
+
+                        {vlmFetchedModels.length > 0 && (
+                          <div
+                            className="p-2.5 rounded-xl border space-y-2"
+                            style={{ background: 'var(--nen)', borderColor: 'var(--vien-nhe)' }}
+                          >
+                            <div className="flex items-center justify-between gap-2 text-[10px]">
+                              <span className="font-bold" style={{ color: 'var(--la)' }}>
+                                Đã tải {vlmFetchedModels.length} models từ API — Chọn model sử dụng:
+                              </span>
+                              <span style={{ color: 'var(--mo)' }}>
+                                {vlmRecommendedModels.length} Vision/Multimodal
+                              </span>
+                            </div>
+                            <select
+                              value={vlmFetchedModels.includes(reaVlmModel) ? reaVlmModel : ''}
+                              onChange={(e) => {
+                                if (e.target.value) setReaVlmModel(e.target.value);
+                              }}
+                              className="sw-input w-full px-3 py-1.5 text-xs"
+                            >
+                              <option value="">-- Chọn nhanh 1 model từ danh sách đã Fetch --</option>
+                              {vlmFetchedModels.map((m) => (
+                                <option key={m} value={m}>
+                                  {vlmRecommendedModels.includes(m) ? `★ ${m} (Vision/Multimodal)` : m}
+                                </option>
+                              ))}
+                            </select>
+                            {vlmRecommendedModels.length > 0 && (
+                              <div className="flex flex-wrap gap-1">
+                                {vlmRecommendedModels.slice(0, 8).map((m) => {
+                                  const selected = reaVlmModel
+                                    .split(',')
+                                    .map((x) => x.trim())
+                                    .includes(m);
+                                  return (
+                                    <button
+                                      key={m}
+                                      type="button"
+                                      onClick={() => setReaVlmModel(m)}
+                                      className="px-2 py-0.5 rounded-full text-[10px] font-semibold border transition"
+                                      style={{
+                                        background: selected ? 'var(--xanh-bg)' : 'var(--xam)',
+                                        borderColor: selected ? 'var(--xanh)' : 'var(--vien-nhe)',
+                                        color: selected ? 'var(--link)' : 'var(--chu)',
+                                      }}
+                                    >
+                                      {m}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                          <div className="sm:col-span-2">
+                            <label className="block text-[10px] font-semibold mb-1" style={{ color: 'var(--mo)' }}>
+                              3. Model đã chọn (hoặc nhập nhiều model cách dấu phẩy)
+                            </label>
+                            <input
+                              value={reaVlmModel}
+                              onChange={(e) => setReaVlmModel(e.target.value)}
+                              placeholder="gemini-2.5-pro,gpt-4o"
+                              className="sw-input w-full px-3 py-1.5 text-xs"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-semibold mb-1" style={{ color: 'var(--mo)' }}>
+                              Ngôn ngữ Report
+                            </label>
+                            <select
+                              value={reaReportLang}
+                              onChange={(e) => setReaReportLang(e.target.value)}
+                              className="sw-input w-full px-3 py-1.5 text-xs"
+                            >
+                              <option value="en">English (en)</option>
+                              <option value="zh">中文 (zh)</option>
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+
                       <button
                         onClick={() =>
                           api
@@ -3099,9 +6631,14 @@ export default function App() {
                               treg_api_key: tregApiKey,
                               bio_brand_name: bioBrandName,
                               bio_brand_subtitle: bioBrandSub,
+                              rea_vlm_enabled: reaVlmEnabled,
+                              rea_vlm_base_url: reaVlmBaseUrl,
+                              rea_vlm_api_key: reaVlmApiKey,
+                              rea_vlm_model: reaVlmModel,
+                              rea_report_lang: reaReportLang,
                             })
                             .then(() => {
-                              notify('Đã lưu cấu hình!');
+                              notify('Đã lưu toàn bộ cấu hình Hệ thống & rea-video!');
                               refreshAll();
                             })
                         }
@@ -3112,27 +6649,306 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="lg:col-span-6 sw-card p-5 space-y-3 text-xs leading-relaxed">
-                    <h2 className="text-sm font-bold flex items-center gap-2">
-                      <Cpu className="w-4 h-4" style={{ color: 'var(--cam)' }} />
-                      Phân tích Kiến trúc: Khi nào nên bọc Rust (Tauri v2)?
-                    </h2>
-                    <p style={{ color: 'var(--mo)' }}>
-                      Hiện tại backend chạy <strong style={{ color: 'var(--la)' }}>Python FastAPI + Crawl4AI + yt-dlp + FFmpeg</strong>{' '}
-                      để xử lý bóc DOM Meta/IG/Threads linh hoạt và ghép video bằng C/Assembly (FFmpeg).
-                    </p>
-                    <ul className="space-y-2 list-disc pl-4" style={{ color: 'var(--mo)' }}>
-                      <li>
-                        <strong>Ưu điểm MVP hiện tại:</strong> UI giao diện chuẩn desktop Apple/SpyWinAds bằng React + Vite,
-                        tích hợp mượt với hệ sinh thái crawler Python.
-                      </li>
-                      <li>
-                        <strong>Lộ trình nâng cấp Rust + Tauri v2:</strong> Khi đóng gói thành app cài đặt{' '}
-                        <code>SpyWinAds-Clone.exe</code> gọn nhẹ giống chính bản desktop đang chạy trên máy, chỉ cần bọc UI này
-                        vào <strong>Tauri v2</strong> và viết worker Rust quản lý xoay vòng 1.000+ token Muse & proxy song song.
-                      </li>
-                    </ul>
+                  <div className="lg:col-span-6 space-y-5">
+                    {/* Agent-Reach Browser & Key Config Card */}
+                    <div className="sw-card p-5 space-y-4">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <h2 className="text-sm font-bold flex items-center gap-2">
+                          <Globe className="w-4 h-4" style={{ color: 'var(--link)' }} />
+                          Trình duyệt &amp; Khoá API cho Agent-Reach
+                        </h2>
+                        <span
+                          className="px-2.5 py-0.5 rounded-full text-[11px] font-bold"
+                          style={{
+                            background: arStatus?.browser?.running ? 'var(--la-bg)' : 'var(--xam)',
+                            color: arStatus?.browser?.running ? 'var(--la)' : 'var(--mo)',
+                          }}
+                        >
+                          {arStatus?.browser?.running ? 'Browser Running' : 'Browser Idle'}
+                        </span>
+                      </div>
+
+                      <div
+                        className="p-3 rounded-2xl border text-[11px] space-y-1"
+                        style={{ background: 'var(--xam)', borderColor: 'var(--vien-nhe)', color: 'var(--mo)' }}
+                      >
+                        <div>
+                          <strong>Profile Dir:</strong>{' '}
+                          <span className="font-mono">{arStatus?.browser?.profile_dir || '~/.agent-reach/browser'}</span>
+                        </div>
+                        <div>
+                          <strong>Browser Binary:</strong>{' '}
+                          <span className="font-mono">{arStatus?.browser?.chrome || 'Chrome / CloakBrowser'}</span>
+                          {arStatus?.browser?.backend ? ` (${arStatus.browser.backend})` : ''}
+                        </div>
+                        <div>
+                          Đăng nhập bằng nút <strong>Đăng nhập Browser</strong> ở bảng kênh bên dưới sẽ mở cửa sổ trình duyệt
+                          riêng của Agent-Reach và tự lưu session cookie vào máy — app không giữ mật khẩu của bạn.
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        {[
+                          { op: 'status', label: 'Kiểm tra Browser' },
+                          { op: 'setup', label: 'Setup Browser' },
+                          { op: 'profiles', label: 'Xem Profiles' },
+                          { op: 'stop', label: 'Dừng Browser' },
+                        ].map((b) => (
+                          <button
+                            key={b.op}
+                            type="button"
+                            disabled={arBusyKey === `browser:${b.op}`}
+                            onClick={() => handleAgentReachBrowserOp(b.op)}
+                            className="sw-pill-btn px-3 py-1.5 text-xs font-semibold border"
+                            style={{ background: 'var(--xam)', borderColor: 'var(--vien-nhe)', color: 'var(--chu)' }}
+                          >
+                            {arBusyKey === `browser:${b.op}` ? 'Đang chạy...' : b.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="pt-3 border-t space-y-2" style={{ borderColor: 'var(--vien-nhe)' }}>
+                        <div className="text-xs font-bold flex items-center gap-1.5">
+                          <KeyRound className="w-3.5 h-3.5" style={{ color: 'var(--cam)' }} />
+                          Cấu hình nhanh Key / Proxy (agent-reach configure)
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <select
+                            value={arCfgKey}
+                            onChange={(e) => setArCfgKey(e.target.value)}
+                            className="sw-input px-3 py-1.5 text-xs"
+                          >
+                            <option value="openai-key">openai-key</option>
+                            <option value="groq-key">groq-key (Whisper)</option>
+                            <option value="proxy">proxy (http://...)</option>
+                            <option value="github-token">github-token</option>
+                            <option value="browser-port">browser-port</option>
+                          </select>
+                          <input
+                            type={arCfgKey.includes('key') || arCfgKey.includes('token') ? 'password' : 'text'}
+                            value={arCfgVal}
+                            onChange={(e) => setArCfgVal(e.target.value)}
+                            placeholder={`Nhập giá trị cho ${arCfgKey}...`}
+                            className="sw-input flex-1 min-w-[160px] px-3 py-1.5 text-xs"
+                          />
+                          <button
+                            type="button"
+                            disabled={arBusyKey === 'configure'}
+                            onClick={handleAgentReachConfigure}
+                            className="sw-pill-btn-primary px-4 py-1.5 text-xs"
+                          >
+                            {arBusyKey === 'configure' ? 'Đang lưu...' : 'Áp dụng'}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Concise Architecture Overview */}
+                    <div className="sw-card p-5 space-y-2.5 text-xs leading-relaxed">
+                      <h2 className="text-sm font-bold flex items-center gap-2">
+                        <Cpu className="w-4 h-4" style={{ color: 'var(--cam)' }} />
+                        Kiến trúc tích hợp: Agent-Reach → yt-dlp → rea-video → FFmpeg
+                      </h2>
+                      <p style={{ color: 'var(--mo)' }}>
+                        Pipeline mới thay thế module crawl đơn nền tảng bằng{' '}
+                        <strong style={{ color: 'var(--la)' }}>Agent-Reach v{arStatus?.version || '1.6.1'}</strong> (đa kênh
+                        YT, Bilibili, Xiaohongshu, X, IG, FB, Reddit, TikTok/Douyin/Threads) kết hợp{' '}
+                        <strong style={{ color: 'var(--link)' }}>rea-video</strong> bóc shot-by-shot trước khi FFmpeg/Muse AI
+                        render biến thể 9:16.
+                      </p>
+                    </div>
                   </div>
+                </div>
+
+                {/* Full-width Agent-Reach Channel & Social Account Login Manager */}
+                <div className="sw-card p-5 space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <h2 className="text-sm font-bold flex items-center gap-2">
+                        <ShieldCheck className="w-4 h-4" style={{ color: 'var(--la)' }} />
+                        Quản lý Kênh &amp; Đăng nhập Tài khoản Social (Agent-Reach Channels)
+                      </h2>
+                      <p className="text-[11px] mt-0.5" style={{ color: 'var(--mo)' }}>
+                        Bật kênh cần quét video viral, mở trình duyệt riêng để đăng nhập từng nền tảng hoặc nhập cookie từ Chrome
+                        sẵn có trên máy.
+                      </p>
+                    </div>
+                    <span className="text-[11px] font-semibold" style={{ color: 'var(--mo)' }}>
+                      {arStatus ? `${arStatus.channels.length} kênh khả dụng` : 'Đang tải danh sách kênh...'}
+                    </span>
+                  </div>
+
+                  {arStatus && !arStatus.installed && (
+                    <div
+                      className="p-3 rounded-2xl border text-xs"
+                      style={{ background: 'var(--cam-bg)', borderColor: 'var(--cam)', color: 'var(--cam)' }}
+                    >
+                      {arStatus.error || 'Chưa phát hiện agent-reach CLI trong PATH.'}
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                    {(arStatus?.channels || []).map((ch) => {
+                      const isReady = ch.status === 'ok' || ch.status === 'ready';
+                      const isDisabled = ch.status === 'off' || ch.status === 'disabled' || ch.status === 'not_added';
+                      return (
+                        <div
+                          key={ch.channel}
+                          className="p-3.5 rounded-2xl border flex flex-col justify-between gap-3"
+                          style={{ background: 'var(--xam)', borderColor: 'var(--vien-nhe)' }}
+                        >
+                          <div className="space-y-1.5">
+                            <div className="flex items-start justify-between gap-2">
+                              <div>
+                                <div className="text-xs font-bold flex items-center gap-1.5" style={{ color: 'var(--chu)' }}>
+                                  <span>{ch.label || ch.channel}</span>
+                                  <span className="text-[10px] font-mono" style={{ color: 'var(--mo)' }}>
+                                    ({ch.channel})
+                                  </span>
+                                </div>
+                                <div className="text-[10px]" style={{ color: 'var(--mo)' }}>
+                                  {ch.category} · {ch.description}
+                                </div>
+                              </div>
+                              <div className="flex flex-col items-end gap-1 shrink-0">
+                                <span
+                                  className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase"
+                                  style={{
+                                    background: isReady
+                                      ? 'var(--la-bg)'
+                                      : isDisabled
+                                      ? 'var(--nen)'
+                                      : 'var(--cam-bg)',
+                                    color: isReady ? 'var(--la)' : isDisabled ? 'var(--mo)' : 'var(--cam)',
+                                  }}
+                                >
+                                  {ch.status}
+                                </span>
+                                {ch.supports_login && (
+                                  <span
+                                    className="px-2 py-0.5 rounded-full text-[10px] font-semibold"
+                                    style={{
+                                      background: ch.logged_in ? 'var(--xanh-bg)' : 'var(--nen)',
+                                      color: ch.logged_in ? 'var(--link)' : 'var(--mo)',
+                                    }}
+                                  >
+                                    {ch.logged_in ? 'Đã đăng nhập' : 'Chưa login'}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            {ch.hint && (
+                              <div className="text-[11px]" style={{ color: 'var(--mo)' }}>
+                                {ch.hint}
+                              </div>
+                            )}
+
+                            {ch.problems && ch.problems.length > 0 && (
+                              <div className="text-[10px]" style={{ color: 'var(--cam)' }}>
+                                {ch.problems.join(' · ')}
+                              </div>
+                            )}
+
+                            {ch.actions && ch.actions.length > 0 && (
+                              <div className="flex flex-wrap gap-1 pt-0.5">
+                                {ch.actions.map((act) => (
+                                  <span
+                                    key={act}
+                                    className="px-1.5 py-0.5 rounded text-[9px] font-mono"
+                                    style={{ background: 'var(--nen)', color: 'var(--mo)' }}
+                                  >
+                                    {act}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="flex flex-wrap gap-1.5 pt-2 border-t" style={{ borderColor: 'var(--vien-nhe)' }}>
+                            <button
+                              type="button"
+                              disabled={arBusyKey === `${ch.channel}:add`}
+                              onClick={() => handleAgentReachChannelOp(ch.channel, 'add')}
+                              className="sw-pill-btn px-2.5 py-1 text-[10px] font-bold"
+                              style={{ background: 'var(--xanh-bg)', color: 'var(--link)' }}
+                            >
+                              {arBusyKey === `${ch.channel}:add` ? 'Đang bật...' : '+ Bật kênh'}
+                            </button>
+
+                            {ch.supports_login && (
+                              <>
+                                <button
+                                  type="button"
+                                  disabled={arBusyKey === `${ch.channel}:login`}
+                                  onClick={() => handleAgentReachChannelOp(ch.channel, 'login')}
+                                  className="sw-pill-btn px-2.5 py-1 text-[10px] font-bold flex items-center gap-1"
+                                  style={{ background: 'var(--la-bg)', color: 'var(--la)' }}
+                                >
+                                  <LogIn className="w-3 h-3" />
+                                  {arBusyKey === `${ch.channel}:login` ? 'Đang mở...' : 'Đăng nhập Browser'}
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={arBusyKey === `${ch.channel}:login_import`}
+                                  onClick={() => handleAgentReachChannelOp(ch.channel, 'login_import')}
+                                  className="sw-pill-btn px-2.5 py-1 text-[10px] font-semibold border"
+                                  style={{ background: 'var(--nen)', borderColor: 'var(--vien-nhe)', color: 'var(--chu)' }}
+                                >
+                                  {arBusyKey === `${ch.channel}:login_import` ? 'Đang lấy...' : 'Đóng Chrome & Lấy Cookie'}
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={arBusyKey === `${ch.channel}:logout`}
+                                  onClick={() => handleAgentReachChannelOp(ch.channel, 'logout')}
+                                  className="sw-pill-btn px-2.5 py-1 text-[10px] font-semibold border flex items-center gap-1"
+                                  style={{ background: 'var(--nen)', borderColor: 'var(--vien-nhe)', color: 'var(--do)' }}
+                                >
+                                  <LogOut className="w-3 h-3" />
+                                  Đăng xuất
+                                </button>
+                              </>
+                            )}
+
+                            <button
+                              type="button"
+                              disabled={arBusyKey === `${ch.channel}:check`}
+                              onClick={() => handleAgentReachChannelOp(ch.channel, 'check')}
+                              className="sw-pill-btn px-2.5 py-1 text-[10px] font-semibold border"
+                              style={{ background: 'var(--nen)', borderColor: 'var(--vien-nhe)', color: 'var(--chu)' }}
+                            >
+                              {arBusyKey === `${ch.channel}:check` ? 'Đang check...' : 'Kiểm tra'}
+                            </button>
+
+                            <button
+                              type="button"
+                              disabled={arBusyKey === `${ch.channel}:remove`}
+                              onClick={() => handleAgentReachChannelOp(ch.channel, 'remove')}
+                              className="sw-pill-btn px-2.5 py-1 text-[10px] font-semibold border"
+                              style={{ background: 'var(--nen)', borderColor: 'var(--vien-nhe)', color: 'var(--mo)' }}
+                            >
+                              Gỡ kênh
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {arActionOutput && (
+                    <div className="space-y-1.5 pt-2">
+                      <div className="text-[11px] font-bold flex items-center gap-1.5" style={{ color: 'var(--mo)' }}>
+                        <Terminal className="w-3.5 h-3.5" />
+                        Log phản hồi Agent-Reach gần nhất
+                      </div>
+                      <pre
+                        className="p-3 rounded-2xl border text-[11px] font-mono overflow-x-auto max-h-48"
+                        style={{ background: 'var(--xam)', borderColor: 'var(--vien-nhe)', color: 'var(--chu)' }}
+                      >
+                        {arActionOutput}
+                      </pre>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -3197,6 +7013,88 @@ export default function App() {
                 </button>
               </div>
 
+              {/* LIVE VIDEO PLAYER IN DRAWER (MP4 Stream / Local MP4 / Social Embed) */}
+              <div
+                className="p-3 rounded-2xl border space-y-2.5"
+                style={{ background: 'var(--xam)', borderColor: 'var(--vien-nhe)' }}
+              >
+                <div className="flex items-center justify-between gap-2 text-xs">
+                  <span className="font-bold flex items-center gap-1.5" style={{ color: 'var(--chu)' }}>
+                    <Play className="w-3.5 h-3.5" style={{ color: 'var(--la)' }} />
+                    Trình phát Video Sản Phẩm Thực Tế
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    {!drawerVideo.localMediaUrl && (
+                      <button
+                        type="button"
+                        disabled={ensuringVideoId === drawerVideo.raw.id}
+                        onClick={() => handleEnsureVideoMp4(drawerVideo.raw.id)}
+                        className="sw-pill-btn px-2.5 py-1 text-[11px] font-semibold flex items-center gap-1"
+                        style={{ background: 'var(--xanh-bg)', color: 'var(--link)' }}
+                      >
+                        <Download className="w-3 h-3" />
+                        {ensuringVideoId === drawerVideo.raw.id ? 'Đang nạp MP4...' : 'Nạp & Phát MP4 Gốc'}
+                      </button>
+                    )}
+                    <a
+                      href={drawerVideo.raw.source_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="sw-pill-btn px-2.5 py-1 text-[11px] font-medium border flex items-center gap-1"
+                      style={{ background: 'var(--nen)', borderColor: 'var(--vien-nhe)', color: 'var(--mo)' }}
+                    >
+                      <ExternalLink className="w-3 h-3" />
+                      Link gốc
+                    </a>
+                  </div>
+                </div>
+
+                {drawerVideo.localMediaUrl ? (
+                  <video
+                    key={drawerVideo.localMediaUrl}
+                    src={drawerVideo.localMediaUrl}
+                    poster={drawerVideo.raw.thumbnail_url || undefined}
+                    controls
+                    autoPlay
+                    playsInline
+                    className="w-full max-h-[360px] rounded-xl bg-black object-contain"
+                  />
+                ) : resolveEmbedUrl(drawerVideo.raw) ? (
+                  <div className="w-full rounded-xl overflow-hidden bg-black aspect-[9/16] max-h-[360px]">
+                    <iframe
+                      key={resolveEmbedUrl(drawerVideo.raw)}
+                      src={resolveEmbedUrl(drawerVideo.raw)}
+                      title={drawerVideo.raw.title}
+                      className="w-full h-full border-0"
+                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
+                      allowFullScreen
+                    />
+                  </div>
+                ) : (
+                  <div className="relative rounded-xl overflow-hidden bg-black max-h-[280px] flex items-center justify-center">
+                    <img
+                      src={
+                        drawerVideo.raw.thumbnail_url ||
+                        'https://images.unsplash.com/photo-1611162617474-5b21e879e113?auto=format&fit=crop&w=600&q=80'
+                      }
+                      alt={drawerVideo.raw.title}
+                      className="w-full max-h-[280px] object-cover opacity-60"
+                    />
+                    <button
+                      type="button"
+                      disabled={ensuringVideoId === drawerVideo.raw.id}
+                      onClick={() => handleEnsureVideoMp4(drawerVideo.raw.id)}
+                      className="absolute sw-pill-btn-primary px-4 py-2.5 text-xs flex items-center gap-2 shadow-lg"
+                    >
+                      <Play className="w-4 h-4 fill-white" />
+                      {ensuringVideoId === drawerVideo.raw.id
+                        ? 'Đang tải luồng MP4 bằng yt-dlp...'
+                        : 'Bấm để Tải & Phát Video MP4'}
+                    </button>
+                  </div>
+                )}
+              </div>
+
               {/* Quick State Toggles (SpyWinAds Personal Tabs) */}
               <div className="flex flex-wrap gap-2">
                 <button
@@ -3234,32 +7132,321 @@ export default function App() {
                   <EyeOff className="w-3.5 h-3.5" />
                   Bỏ khỏi bảng
                 </button>
+                <button
+                  disabled={reaBusyVideoId === drawerVideo.raw.id}
+                  onClick={() => handleReaDecompose(drawerVideo.raw.id)}
+                  className="sw-pill-btn px-3 py-1.5 text-xs font-semibold border flex items-center gap-1.5"
+                  style={{
+                    background: drawerVideo.raw.rea_breakdown ? 'var(--la-bg)' : 'var(--xanh-bg)',
+                    borderColor: 'var(--vien-nhe)',
+                    color: drawerVideo.raw.rea_breakdown ? 'var(--la)' : 'var(--link)',
+                  }}
+                >
+                  <Scissors className="w-3.5 h-3.5" />
+                  {reaBusyVideoId === drawerVideo.raw.id
+                    ? 'Đang mổ xẻ (rea-video)...'
+                    : drawerVideo.raw.rea_breakdown
+                    ? `Phân tích lại (${drawerVideo.raw.rea_breakdown.shots_count} shots)`
+                    : 'Mổ xẻ Shot-by-Shot (rea-video)'}
+                </button>
+                {drawerVideo.raw.rea_report_url && (
+                  <a
+                    href={drawerVideo.raw.rea_report_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="sw-pill-btn px-3 py-1.5 text-xs font-semibold border flex items-center gap-1.5"
+                    style={{ background: 'var(--xam)', borderColor: 'var(--vien-nhe)', color: 'var(--chu)' }}
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    Mở Report HTML
+                  </a>
+                )}
               </div>
 
-              {/* 3 Core SpyWinAds Metrics: Win / Scale / Cũ */}
+              {/* ====================================================================
+                  MULTI-PLATFORM POTENTIAL EVALUATION & COMPETITOR SHOPS SPY PANEL
+                 ==================================================================== */}
+              <div
+                className="p-4 rounded-2xl border space-y-3 text-xs"
+                style={{ background: 'var(--xam)', borderColor: 'var(--vien-nhe)' }}
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="font-bold flex items-center gap-1.5" style={{ color: 'var(--chu)' }}>
+                    <ShoppingBag className="w-4 h-4" style={{ color: 'var(--la)' }} />
+                    Đánh Giá Tiềm Năng &amp; Các Shop Đang Chạy Thực Tế
+                  </div>
+                  <span
+                    className="px-2.5 py-0.5 rounded-full text-[11px] font-bold"
+                    style={{
+                      background: drawerVideo.potentialTier === 'S' ? 'var(--la-bg)' : 'var(--xanh-bg)',
+                      color: drawerVideo.potentialTier === 'S' ? 'var(--la)' : 'var(--link)',
+                    }}
+                  >
+                    Hạng {drawerVideo.potentialTier} · {drawerVideo.potentialScore}/100đ
+                  </span>
+                </div>
+
+                {drawerVideo.marketIntel?.verdict && (
+                  <div
+                    className="p-2.5 rounded-xl border font-semibold leading-snug"
+                    style={{ background: 'var(--nen)', borderColor: 'var(--vien-nhe)', color: 'var(--chu)' }}
+                  >
+                    {drawerVideo.marketIntel.verdict}
+                  </div>
+                )}
+
+                {drawerVideo.marketIntel?.evaluation_reasons &&
+                  drawerVideo.marketIntel.evaluation_reasons.length > 0 && (
+                    <ul className="list-disc pl-4 space-y-1 text-[11px]" style={{ color: 'var(--mo)' }}>
+                      {drawerVideo.marketIntel.evaluation_reasons.map((rsn, idxR) => (
+                        <li key={idxR}>{rsn}</li>
+                      ))}
+                    </ul>
+                  )}
+
+                {/* Product Keyword Search / Override for Live Competitor Spy */}
+                <div className="pt-1 space-y-1.5">
+                  <label className="block text-[11px] font-semibold" style={{ color: 'var(--mo)' }}>
+                    Từ khoá sản phẩm dò Shop &amp; Ads (tự nhận diện hoặc nhập tên SP cụ thể):
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      value={customSpyQuery}
+                      onChange={(e) => setCustomSpyQuery(e.target.value)}
+                      placeholder="VD: dây chuyền bạc, christmas lights, ergonomic chair..."
+                      className="sw-input flex-1 px-3 py-1.5 text-xs"
+                    />
+                    <button
+                      type="button"
+                      disabled={spyingVideoId === drawerVideo.raw.id}
+                      onClick={() => handleEvaluateSingleVideo(drawerVideo.raw.id, customSpyQuery)}
+                      className="sw-pill-btn-primary px-3.5 py-1.5 text-xs font-semibold flex items-center gap-1.5 shrink-0"
+                    >
+                      <Search className="w-3.5 h-3.5" />
+                      {spyingVideoId === drawerVideo.raw.id ? 'Đang dò Shop...' : 'Dò Shop & Giá'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Summary Strip: Active Shops | Total Ads | Selling Price */}
+                <div className="grid grid-cols-3 gap-2 pt-1">
+                  <div className="p-2.5 rounded-xl text-center" style={{ background: 'var(--nen)' }}>
+                    <div className="text-[10px]" style={{ color: 'var(--mo)' }}>
+                      Shop đang chạy
+                    </div>
+                    <div className="text-base font-bold mt-0.5" style={{ color: 'var(--chu)' }}>
+                      {drawerVideo.shopActive} shop
+                    </div>
+                  </div>
+                  <div className="p-2.5 rounded-xl text-center" style={{ background: 'var(--nen)' }}>
+                    <div className="text-[10px]" style={{ color: 'var(--mo)' }}>
+                      Số lượng Ads
+                    </div>
+                    <div className="text-base font-bold mt-0.5" style={{ color: 'var(--xanh)' }}>
+                      {drawerVideo.totalAdsSameVideo} QC
+                    </div>
+                  </div>
+                  <div className="p-2.5 rounded-xl text-center" style={{ background: 'var(--nen)' }}>
+                    <div className="text-[10px]" style={{ color: 'var(--mo)' }}>
+                      Giá đang bán
+                    </div>
+                    <div className="text-xs font-bold mt-1 truncate" style={{ color: 'var(--la)' }}>
+                      {drawerVideo.priceLabel}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Detailed List of Discovered Competitor Shops */}
+                {drawerVideo.shops.length > 0 ? (
+                  <div className="space-y-2 pt-1">
+                    <div className="text-[11px] font-bold" style={{ color: 'var(--chu)' }}>
+                      Danh sách các Shop đang bán ({drawerVideo.shops.length} shop):
+                    </div>
+                    <div className="space-y-2 max-h-[290px] overflow-y-auto pr-1">
+                      {drawerVideo.shops.map((sh, sIdx) => (
+                        <div
+                          key={sIdx}
+                          className="p-3 rounded-xl border space-y-1.5"
+                          style={{ background: 'var(--nen)', borderColor: 'var(--vien-nhe)' }}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <div className="font-bold text-xs truncate" style={{ color: 'var(--chu)' }}>
+                                {sh.shop_name}
+                              </div>
+                              {sh.product_title && (
+                                <div className="text-[11px] truncate" style={{ color: 'var(--mo)' }}>
+                                  SP: {sh.product_title}
+                                </div>
+                              )}
+                            </div>
+                            <span
+                              className="px-2 py-0.5 rounded-full text-[10px] font-semibold shrink-0"
+                              style={{ background: 'var(--xam)', color: 'var(--mo)' }}
+                            >
+                              {sh.source}
+                            </span>
+                          </div>
+
+                          <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5">
+                            <div className="flex items-center gap-2">
+                              <span
+                                className="font-bold text-xs"
+                                style={{ color: sh.selling_price ? 'var(--la)' : 'var(--mo2)' }}
+                              >
+                                {sh.selling_price || 'Xem giá trên trang'}
+                              </span>
+                              {sh.original_price && (
+                                <span className="text-[11px] line-through" style={{ color: 'var(--mo2)' }}>
+                                  {sh.original_price}
+                                </span>
+                              )}
+                              {sh.ads_count > 0 && (
+                                <span
+                                  className="px-2 py-0.5 rounded-full text-[10px] font-bold"
+                                  style={{ background: 'var(--xanh-bg)', color: 'var(--link)' }}
+                                >
+                                  {sh.ads_count} QC đang chạy
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              {(sh.page_id || sh.shop_name) && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    handleInspectMetaShopProducts({
+                                      page_id: sh.page_id || '',
+                                      shop_name: sh.shop_name,
+                                    })
+                                  }
+                                  className="px-2 py-1 rounded-lg text-[10px] font-bold border flex items-center gap-1 hover:opacity-90"
+                                  style={{ background: 'var(--nen)', borderColor: 'var(--vien)', color: 'var(--chu)' }}
+                                  title="Xem tất cả sản phẩm mà Shop này đang chạy Ads bán"
+                                >
+                                  Kệ SP Shop
+                                </button>
+                              )}
+                              {sh.ad_library_url && (
+                                <a
+                                  href={sh.ad_library_url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="px-2 py-1 rounded-lg text-[10px] font-semibold border flex items-center gap-1 hover:underline"
+                                  style={{ background: 'var(--xam)', borderColor: 'var(--vien-nhe)', color: 'var(--link)' }}
+                                >
+                                  Xem Ads
+                                  <ExternalLink className="w-2.5 h-2.5" />
+                                </a>
+                              )}
+                              {sh.product_url && (
+                                <>
+                                  <a
+                                    href={sh.product_url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="px-2.5 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1 hover:opacity-90"
+                                    style={{ background: 'var(--xanh-bg)', color: 'var(--link)' }}
+                                    title={sh.product_url}
+                                  >
+                                    <Link2 className="w-3 h-3" />
+                                    Link SP
+                                    <ExternalLink className="w-2.5 h-2.5" />
+                                  </a>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      navigator.clipboard.writeText(sh.product_url || '');
+                                      notify('Đã copy Link Sản Phẩm!');
+                                    }}
+                                    className="p-1 rounded-lg border"
+                                    style={{ background: 'var(--xam)', borderColor: 'var(--vien-nhe)', color: 'var(--mo)' }}
+                                    title="Copy link sản phẩm"
+                                  >
+                                    <ClipboardCopy className="w-3 h-3" />
+                                  </button>
+                                </>
+                              )}
+                              {sh.shop_url ? (
+                                <>
+                                  <a
+                                    href={sh.shop_url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="px-2.5 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1 hover:opacity-90"
+                                    style={{ background: 'var(--la-bg)', color: 'var(--la)' }}
+                                    title={sh.shop_url}
+                                  >
+                                    <ShoppingBag className="w-3 h-3" />
+                                    Link Shop
+                                    <ExternalLink className="w-2.5 h-2.5" />
+                                  </a>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      navigator.clipboard.writeText(sh.shop_url);
+                                      notify(`Đã copy link shop: ${sh.domain}`);
+                                    }}
+                                    className="p-1 rounded-lg border"
+                                    style={{ background: 'var(--xam)', borderColor: 'var(--vien-nhe)', color: 'var(--mo)' }}
+                                    title="Copy link shop đang bán"
+                                  >
+                                    <ClipboardCopy className="w-3 h-3" />
+                                  </button>
+                                </>
+                              ) : sh.page_url ? (
+                                <a
+                                  href={sh.page_url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="px-2.5 py-1 rounded-lg text-[10px] font-semibold border flex items-center gap-1"
+                                  style={{ background: 'var(--xam)', borderColor: 'var(--vien-nhe)', color: 'var(--chu)' }}
+                                >
+                                  Mở Fanpage
+                                  <ExternalLink className="w-2.5 h-2.5" />
+                                </a>
+                              ) : null}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div
+                    className="p-3 rounded-xl border text-[11px] leading-relaxed"
+                    style={{ background: 'var(--nen)', borderColor: 'var(--vien-nhe)', color: 'var(--mo)' }}
+                  >
+                    Chưa có danh sách shop đối thủ cho video này. Bấm nút <strong>&ldquo;Dò Shop &amp; Giá&rdquo;</strong> ở trên để hệ thống tự động tìm các shop đang chạy quảng cáo, bóc tách link trang bán, số lượng QC và giá thực tế.
+                  </div>
+                )}
+              </div>
+
+              {/* 3 Core Velocity & Ad Age Metrics */}
               <div className="grid grid-cols-3 gap-2.5">
                 <div className="p-3 rounded-2xl text-center" style={{ background: 'var(--la-bg)' }}>
                   <div className="text-[11px] font-medium" style={{ color: 'var(--la)' }}>
-                    Win (7–14 ngày)
+                    Tốc độ View/ngày
                   </div>
-                  <div className="text-2xl font-bold mt-0.5" style={{ color: 'var(--la)' }}>
-                    {drawerVideo.winCount}
+                  <div className="text-xl font-bold mt-0.5" style={{ color: 'var(--la)' }}>
+                    {formatCompact(drawerVideo.velocityViewsPerDay)}
                   </div>
                 </div>
                 <div className="p-3 rounded-2xl text-center" style={{ background: 'var(--xanh-bg)' }}>
                   <div className="text-[11px] font-medium" style={{ color: 'var(--link)' }}>
-                    Scale (&lt; 7 ngày)
+                    Tương tác thực
                   </div>
-                  <div className="text-2xl font-bold mt-0.5" style={{ color: 'var(--xanh)' }}>
-                    {drawerVideo.scaleCount}
+                  <div className="text-xl font-bold mt-0.5" style={{ color: 'var(--xanh)' }}>
+                    {drawerVideo.engagementRate}%
                   </div>
                 </div>
                 <div className="p-3 rounded-2xl text-center" style={{ background: 'var(--xam)' }}>
                   <div className="text-[11px] font-medium" style={{ color: 'var(--mo)' }}>
-                    Cũ (&gt; 14 ngày)
+                    Tuổi Video
                   </div>
-                  <div className="text-2xl font-bold mt-0.5" style={{ color: 'var(--chu)' }}>
-                    {drawerVideo.oldAdsCount}
+                  <div className="text-xl font-bold mt-0.5" style={{ color: 'var(--chu)' }}>
+                    {drawerVideo.videoAgeDays} ngày
                   </div>
                 </div>
               </div>
@@ -3299,26 +7486,51 @@ export default function App() {
 
               {/* AI Hook & Script 3-Part Breakdown */}
               <div className="space-y-2.5 text-xs">
-                <div className="p-3.5 rounded-2xl border space-y-1" style={{ background: 'var(--xam)', borderColor: 'var(--vien-nhe)' }}>
-                  <div className="font-bold flex items-center gap-1.5" style={{ color: 'var(--link)' }}>
-                    <Zap className="w-3.5 h-3.5" />
-                    Hook 3 giây đầu (Bắt buộc giữ nhịp khi Clone)
+                <div className="p-3.5 rounded-2xl border space-y-1.5" style={{ background: 'var(--xam)', borderColor: 'var(--vien-nhe)' }}>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="font-bold flex items-center gap-1.5" style={{ color: 'var(--link)' }}>
+                      <Zap className="w-3.5 h-3.5" />
+                      Hook 3 giây đầu &amp; Góc đánh tâm lý
+                    </div>
+                    <button
+                      type="button"
+                      disabled={analyzingAiVideoId === drawerVideo.raw.id}
+                      onClick={() => handleAnalyzeVideoAi(drawerVideo.raw.id)}
+                      className="sw-pill-btn px-2.5 py-0.5 text-[10px] font-bold border flex items-center gap-1"
+                      style={{ background: 'var(--nen)', borderColor: 'var(--vien-nhe)', color: 'var(--chu)' }}
+                    >
+                      <Sparkles className="w-3 h-3" style={{ color: 'var(--cam)' }} />
+                      {analyzingAiVideoId === drawerVideo.raw.id ? 'AI đang phân tích...' : 'Phân tích sâu bằng AI'}
+                    </button>
                   </div>
-                  <p style={{ color: 'var(--chu)' }}>{drawerVideo.raw.hook_text || drawerVideo.raw.caption}</p>
+                  <p className="whitespace-pre-line leading-relaxed" style={{ color: 'var(--chu)' }}>
+                    {drawerVideo.raw.hook_text || drawerVideo.raw.caption}
+                  </p>
                 </div>
 
                 {drawerVideo.raw.script_summary && (
                   <div
-                    className="p-3.5 rounded-2xl border space-y-1"
+                    className="p-3.5 rounded-2xl border space-y-1.5"
                     style={{ background: 'var(--xam)', borderColor: 'var(--vien-nhe)' }}
                   >
                     <div className="font-bold flex items-center gap-1.5" style={{ color: 'var(--chu)' }}>
                       <MessageSquare className="w-3.5 h-3.5" />
-                      Cấu trúc kịch bản bán hàng
+                      Phân tích Kịch bản &amp; USP Thực tế của Video này
                     </div>
-                    <p style={{ color: 'var(--mo)' }}>{drawerVideo.raw.script_summary}</p>
+                    <p className="whitespace-pre-line leading-relaxed" style={{ color: 'var(--mo)' }}>
+                      {drawerVideo.raw.script_summary}
+                    </p>
                   </div>
                 )}
+
+                <div className="p-3.5 rounded-2xl border space-y-1" style={{ background: 'var(--xam)', borderColor: 'var(--vien-nhe)' }}>
+                  <div className="font-bold text-[11px]" style={{ color: 'var(--mo)' }}>
+                    Nội dung bài viết / Quảng cáo gốc:
+                  </div>
+                  <p className="whitespace-pre-line text-[11px] max-h-36 overflow-y-auto leading-relaxed" style={{ color: 'var(--chu)' }}>
+                    {drawerVideo.raw.caption}
+                  </p>
+                </div>
 
                 <div className="flex flex-wrap gap-1.5">
                   {drawerVideo.raw.sales_signals.map((sig, i) => (
@@ -3331,6 +7543,151 @@ export default function App() {
                     </span>
                   ))}
                 </div>
+
+                {drawerVideo.raw.rea_breakdown && (() => {
+                  const bd = drawerVideo.raw.rea_breakdown;
+                  const reportHref = drawerVideo.raw.rea_report_url || bd.report_url;
+                  return (
+                    <div
+                      className="p-3.5 rounded-2xl border space-y-3"
+                      style={{ background: 'var(--xam)', borderColor: 'var(--vien-nhe)' }}
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="font-bold flex items-center gap-1.5" style={{ color: 'var(--chu)' }}>
+                          <Film className="w-3.5 h-3.5" style={{ color: 'var(--link)' }} />
+                          rea-video Shot-by-Shot Forensics
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            className="px-2 py-0.5 rounded-full text-[10px] font-bold"
+                            style={{ background: 'var(--xanh-bg)', color: 'var(--link)' }}
+                          >
+                            {bd.shots_count} shots · {bd.duration.toFixed(1)}s
+                          </span>
+                          {reportHref && (
+                            <a
+                              href={reportHref}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1"
+                              style={{ background: 'var(--nen)', color: 'var(--chu)' }}
+                            >
+                              <ExternalLink className="w-3 h-3" />
+                              report.html
+                            </a>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="text-[11px] space-y-1">
+                        <div className="font-semibold" style={{ color: 'var(--chu)' }}>
+                          Verdict: {bd.verdict || 'Đã tách shot'}
+                        </div>
+                        <div style={{ color: 'var(--mo)' }}>
+                          Avg shot: {bd.avg_shot_s.toFixed(2)}s · Confidence: {(bd.confidence * 100).toFixed(0)}%
+                          {bd.vlm_note ? ` · ${bd.vlm_note}` : ''}
+                        </div>
+                        {bd.source_note && (
+                          <div className="text-[10px]" style={{ color: 'var(--mo)' }}>
+                            {bd.source_note}
+                          </div>
+                        )}
+                      </div>
+
+                      {bd.production_mix && bd.production_mix.length > 0 && (
+                        <div className="flex flex-wrap gap-1">
+                          {bd.production_mix.map((pm, idx) => (
+                            <span
+                              key={idx}
+                              className="px-2 py-0.5 rounded-full text-[10px] font-semibold"
+                              style={{ background: 'var(--nen)', color: 'var(--chu)' }}
+                            >
+                              {pm.label}: {(pm.ratio * 100).toFixed(0)}% ({pm.seconds.toFixed(1)}s)
+                            </span>
+                          ))}
+                        </div>
+                      )}
+
+                      {bd.storyboard_url && (
+                        <a href={reportHref || bd.storyboard_url} target="_blank" rel="noreferrer" className="block">
+                          <img
+                            src={bd.storyboard_url}
+                            alt="rea-video storyboard"
+                            className="w-full rounded-xl border object-cover max-h-48"
+                            style={{ borderColor: 'var(--vien-nhe)' }}
+                          />
+                        </a>
+                      )}
+
+                      {bd.shots && bd.shots.length > 0 && (
+                        <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                          {bd.shots.map((s) => (
+                            <div
+                              key={s.index}
+                              className="p-2 rounded-xl border flex gap-2.5 items-start"
+                              style={{ background: 'var(--nen)', borderColor: 'var(--vien-nhe)' }}
+                            >
+                              {s.thumb_url && (
+                                <img
+                                  src={s.thumb_url}
+                                  alt={`Shot ${s.index}`}
+                                  className="w-14 h-14 rounded-lg object-cover shrink-0 border"
+                                  style={{ borderColor: 'var(--vien-nhe)' }}
+                                />
+                              )}
+                              <div className="min-w-0 flex-1 space-y-0.5">
+                                <div className="flex flex-wrap items-center justify-between gap-1 text-[10px]">
+                                  <span className="font-bold" style={{ color: 'var(--chu)' }}>
+                                    #{s.index} · {s.start.toFixed(1)}s–{s.end.toFixed(1)}s ({s.label})
+                                  </span>
+                                  <span
+                                    className="px-1.5 py-0.5 rounded font-semibold"
+                                    style={{ background: 'var(--cam-bg)', color: 'var(--cam)' }}
+                                  >
+                                    {s.remake_route}
+                                  </span>
+                                </div>
+                                <p className="text-[11px] leading-snug line-clamp-2" style={{ color: 'var(--mo)' }}>
+                                  {s.prompt || s.verdict || bd.verdict}
+                                </p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                        {bd.remake_md_excerpt && (
+                          <span className="text-[10px] truncate flex-1" style={{ color: 'var(--mo)' }}>
+                            {bd.remake_md_excerpt.split('\n')[0]}
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const shotLines = (bd.shots || [])
+                              .slice(0, 5)
+                              .map(
+                                (s) =>
+                                  `[${s.start.toFixed(1)}s-${s.end.toFixed(1)}s ${s.label} · ${s.remake_route}] ${
+                                    s.prompt || bd.verdict
+                                  }`
+                              )
+                              .join('\n');
+                            setCloneMode('rea_video_remake');
+                            handleSelectForClone(drawerVideo.raw);
+                            if (shotLines) setPromptScript(shotLines);
+                          }}
+                          className="sw-pill-btn px-3 py-1.5 text-[11px] font-bold flex items-center gap-1"
+                          style={{ background: 'var(--xanh-bg)', color: 'var(--link)' }}
+                        >
+                          <Scissors className="w-3 h-3" />
+                          Clone theo Shot-by-Shot
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             </div>
 
@@ -3355,12 +7712,108 @@ export default function App() {
                 <ExternalLink className="w-4 h-4" />
               </a>
               <button
+                onClick={() => handleSelectForFlowClone(drawerVideo.raw)}
+                className="sw-pill-btn py-2.5 px-3.5 text-xs font-semibold border flex items-center justify-center gap-1.5"
+                style={{ background: 'var(--la-bg)', borderColor: 'transparent', color: 'var(--la)' }}
+              >
+                <Film className="w-4 h-4" />
+                Clone Google Flow
+              </button>
+              <button
                 onClick={() => handleSelectForClone(drawerVideo.raw)}
                 className="sw-pill-btn-primary flex-1 py-2.5 px-4 text-xs flex items-center justify-center gap-1.5"
               >
                 <Sparkles className="w-4 h-4" />
-                Clone bằng Muse AI
+                Clone Muse AI
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ====================================================================
+          GOOGLE FLOW (flow.google.com) BULK ACCOUNT IMPORT MODAL
+         ==================================================================== */}
+      {showFlowImportModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: 'rgba(0, 0, 0, 0.5)', backdropFilter: 'blur(4px)' }}
+          onClick={() => setShowFlowImportModal(false)}
+        >
+          <div
+            className="sw-card max-w-2xl w-full p-5 space-y-4 max-h-[85vh] overflow-y-auto"
+            style={{ boxShadow: 'var(--shadow-float)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold flex items-center gap-2">
+                <Film className="w-4 h-4" style={{ color: 'var(--la)' }} />
+                Nhập Tài Khoản Google Flow (flow.google.com)
+              </h3>
+              <button
+                onClick={() => setShowFlowImportModal(false)}
+                className="p-1.5 rounded-full"
+                style={{ background: 'var(--xam)', color: 'var(--mo)' }}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div
+              className="p-3 rounded-xl border text-[11px] space-y-1 leading-relaxed"
+              style={{ background: 'var(--xam)', borderColor: 'var(--vien-nhe)', color: 'var(--mo)' }}
+            >
+              <div className="font-bold" style={{ color: 'var(--chu)' }}>
+                Hỗ trợ tự động nhận diện cả 4 định dạng tài khoản Flow:
+              </div>
+              <div>• <strong>Cookie JSON</strong> xuất từ tiện ích Cookie-Editor / EditThisCookie trên <code>flow.google.com</code></div>
+              <div>• <strong>Dòng hàng loạt</strong>: <code>email@gmail.com | SID=...; HSID=...; SAPISID=... | http://proxy:port</code></div>
+              <div>• <strong>OAuth Bearer Token</strong>: <code>TenAcc | ya29.a0AfH6SM... | https://flow.google.com/project/...</code></div>
+              <div>• <strong>Gemini Veo API Key</strong>: <code>TenAcc | AIzaSy...</code></div>
+            </div>
+
+            <div className="space-y-2">
+              <textarea
+                rows={6}
+                value={flowBulkText}
+                onChange={(e) => setFlowBulkText(e.target.value)}
+                placeholder="Dán mảng JSON Cookie [...], file Netscape cookies.txt, hoặc danh sách Email|Cookie/Token|Proxy vào đây..."
+                className="sw-input w-full p-3 text-xs font-mono"
+              />
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs" style={{ color: 'var(--mo)' }}>
+                      Gói Acc:
+                    </span>
+                    <select
+                      value={flowBulkTier}
+                      onChange={(e) => setFlowBulkTier(e.target.value)}
+                      className="sw-input px-2.5 py-1 text-xs"
+                    >
+                      <option value="Flow Free">Flow Free (50 credits/ngày · OmniFlash ≤10s &amp; Veo 3.1 Lite)</option>
+                      <option value="Flow Plus">Google AI Plus (Flow · 200 credits/tháng)</option>
+                      <option value="Flow Pro">Google AI Pro (Flow · 1,000 credits/tháng)</option>
+                      <option value="Flow Ultra">Google AI Ultra (Flow · 25,000 credits/tháng)</option>
+                      <option value="Gemini Veo API">Gemini Veo / Omni API Key</option>
+                    </select>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs" style={{ color: 'var(--mo)' }}>
+                      Giới hạn lượt/tuần:
+                    </span>
+                    <input
+                      type="number"
+                      value={flowBulkLimit}
+                      onChange={(e) => setFlowBulkLimit(Number(e.target.value) || 50)}
+                      className="sw-input w-20 px-2.5 py-1 text-xs"
+                    />
+                  </div>
+                </div>
+                <button onClick={handleFlowBulkImport} className="sw-pill-btn-primary px-4 py-2 text-xs font-semibold">
+                  Nạp Vào Kho Google Flow
+                </button>
+              </div>
             </div>
           </div>
         </div>

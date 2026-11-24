@@ -1,45 +1,86 @@
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import database
 
 
 def build_affiliate_copy(
-    product: Dict[str, Any],
+    product: Optional[Dict[str, Any]],
     target_platform: str,
     custom_hook: str = "",
+    video: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Generate platform-compliant caption + comment/bio link strategy so reach is not throttled."""
+    """Generate natural organic viral caption + engagement/optional product first comment."""
+    video_title = (video or {}).get("title") or "Clip viral thực tế"
+    hook = (
+        custom_hook.strip()
+        or (video or {}).get("hook_text", "").strip()
+        or (f"🔥 Review thực tế {product['name']}!" if product else video_title)
+    )
+
+    if not product:
+        if target_platform == "instagram_reels":
+            caption = (
+                f"{hook}\n\n"
+                "✨ Giữ nguyên nhịp cắt 3 giây đầu từ bản viral gốc — xem hết clip để thấy đoạn kết bất ngờ nha!\n"
+                "#reels #xuhuong #reviewchanthat #viral"
+            )
+            strategy = "organic_viral_reels"
+            first_comment_out = (
+                "Mình test kỹ từng góc quay rồi mới lên clip này — mọi người muốn hỏi chi tiết hay cần tìm món nào trong video thì cmt bên dưới nhé 👇"
+            )
+        elif target_platform == "threads":
+            caption = (
+                f"{hook}\n\n"
+                "📌 Chia sẻ lại góc quay & trải nghiệm thực tế cho ai đang tìm hiểu 👇"
+            )
+            strategy = "organic_thread_story"
+            first_comment_out = (
+                "Ai muốn xem thêm hậu trường hoặc chi tiết mình dùng trong clip thì nhắn ở đây mình rep từng bạn nha 💬"
+            )
+        else:
+            caption = (
+                f"{hook}\n\n"
+                "👉 Xem hết clip xem đoạn chuyển cảnh có mượt không nha cả nhà! Lưu lại khi cần nhé 🔥\n"
+                "#reels #xuhuong #videohay #chiase"
+            )
+            strategy = "organic_engagement_comment"
+            first_comment_out = (
+                "Clip này quay theo đúng nhịp viral đang lên — anh chị em cần mình chia sẻ thêm thông tin trong video cứ bình luận bên dưới nhé 👇"
+            )
+        return {
+            "caption": caption,
+            "first_comment": first_comment_out,
+            "link_strategy": strategy,
+        }
+
     code = product["code"]
     name = product["name"]
     price = product["price"]
     aff_url = product["affiliate_url"]
-    hook = custom_hook.strip() or f"🔥 Review thực tế {name} đang sale chỉ còn {price}!"
 
-    raw_comment = product.get("comment_template") or f"🛒 Đặt mua {name} chính hãng tại đây: {{affiliate_url}} 👇"
+    raw_comment = product.get("comment_template") or f"🛒 Chỗ mình lấy {name} ({price}) ở đây cho ai hỏi nè: {{affiliate_url}} 👇"
     first_comment = raw_comment.replace("{affiliate_url}", aff_url).replace("{code}", code)
 
     if target_platform == "instagram_reels":
-        # Instagram Reels comments are not clickable -> direct users to Link-in-Bio with Product Code
         caption = (
             f"{hook}\n\n"
-            f"✨ Xem chi tiết & săn giá {price} tại LINK TRÊN BIO đầu trang (Tìm mã: #{code}) 👇\n"
-            f"#review #affiliate #{code.lower()} #reelsvietnam"
+            f"✨ Ai cần xem thông tin món mình dùng trong clip thì ghé link đầu trang (tìm mã #{code}) nha 👇\n"
+            f"#reels #reviewthucte #{code.lower()}"
         )
         strategy = "bio_link_code"
-        first_comment_out = f"Tìm mã #{code} trên Link Bio đầu trang để nhận giá {price} nha cả nhà ✨"
+        first_comment_out = f"Ai hỏi chỗ lấy cứ vào link đầu trang tìm mã #{code} ({price}) nhé ✨"
     elif target_platform == "threads":
         caption = (
             f"{hook}\n\n"
-            f"📌 Video test thực tế bên trên — Link mua chính hãng ({price}) mình gắn ở Reply đầu tiên bên dưới 👇"
+            f"📌 Trải nghiệm thực tế bên trên — thông tin món mình dùng ({price}) mình để gọn dưới Reply cho ai cần 👇"
         )
         strategy = "direct_thread_reply"
         first_comment_out = first_comment
     else:
-        # Facebook Reels: avoid placing raw affiliate URL inside main caption; put it in First Comment
         caption = (
             f"{hook}\n\n"
-            f"👉 Mình để link sản phẩm chính hãng ({price}) ở BÌNH LUẬN ĐẦU TIÊN bên dưới để mọi người bấm cho tiện nhé! (Mã #{code})\n"
-            f"#reels #reviewchanthat #sanphamhot"
+            f"👉 Video trải nghiệm thực tế cho mọi người tham khảo. Ai cần xem chi tiết ({price}) mình để ở bình luận đầu nha!\n"
+            f"#reels #reviewchanthat #xuhuong"
         )
         strategy = "auto_first_comment"
         first_comment_out = first_comment
@@ -59,17 +100,16 @@ def dispatch_publish_task(
     caption: str = "",
     first_comment_text: str = "",
 ) -> Dict[str, Any]:
-    product = database.get_product(product_id)
-    if not product:
-        raise ValueError("Không tìm thấy sản phẩm Affiliate")
+    product = database.get_product(product_id) if product_id and product_id > 0 else None
+    job = database.get_clone_job(clone_job_id)
+    video = database.get_video(job["source_video_id"]) if job else None
 
-    pkg = build_affiliate_copy(product, target_platform)
+    pkg = build_affiliate_copy(product, target_platform, custom_hook=(job or {}).get("prompt_script", ""), video=video)
     final_caption = caption.strip() or pkg["caption"]
     final_comment = first_comment_text.strip() or pkg["first_comment"]
     strategy = pkg["link_strategy"]
 
-    # Ensure product is visible on Link-in-Bio storefront
-    if not product.get("bio_active"):
+    if product and not product.get("bio_active"):
         database.toggle_product_bio(product_id)
 
     status = "published_bio_synced" if strategy == "bio_link_code" else "published_with_comment"
@@ -80,13 +120,13 @@ def dispatch_publish_task(
     return database.create_publish_task(
         {
             "clone_job_id": clone_job_id,
-            "product_id": product_id,
+            "product_id": product["id"] if product else 0,
             "target_platform": target_platform,
-            "account_name": account_name.strip() or "@aff_channel_01",
+            "account_name": account_name.strip() or "@creator_viral_01",
             "caption": final_caption,
             "link_strategy": strategy,
             "first_comment_text": final_comment,
-            "bio_url_synced": True,
+            "bio_url_synced": bool(product),
             "status": status,
             "published_url": published_url,
             "comment_url": comment_url,

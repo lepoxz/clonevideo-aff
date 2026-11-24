@@ -13,13 +13,8 @@ venv/
 .env
 .env.local
 
-# Media files generated/downloaded during runtime
-backend/media/downloads/*.mp4
-backend/media/downloads/*.webm
-backend/media/downloads/*.jpg
-backend/media/downloads/*.png
-backend/media/outputs/*.mp4
-backend/media/outputs/*.png
+# Media files, Chrome profiles & cookies generated/downloaded during runtime
+backend/media/
 
 # Build outputs
 frontend/dist/

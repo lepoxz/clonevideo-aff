@@ -1,7 +1,9 @@
+from __future__ import annotations
+
 import asyncio
 import html
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,12 +13,21 @@ from pydantic import BaseModel
 
 import crawler_service
 import database
+import flow_service
 import muse_service
 import publisher_service
 
 database.init_db()
+database.fail_stale_running_jobs()
 
 app = FastAPI(title="CloneVideo-Aff Studio API", version="0.1.0")
+_active_job_tasks: Dict[int, asyncio.Task] = {}
+
+
+def _spawn_clone_job_task(job_id: int) -> None:
+    t = asyncio.create_task(muse_service.run_clone_job(job_id))
+    _active_job_tasks[job_id] = t
+    t.add_done_callback(lambda _: _active_job_tasks.pop(job_id, None))
 
 app.add_middleware(
     CORSMiddleware,
@@ -36,6 +47,19 @@ class CrawlRequest(BaseModel):
     platform: str = "all"
     engine: str = "crawl4ai_free"
     country: str = "VN"
+    match_type: str = "broad"
+
+
+class EvaluatePotentialRequest(BaseModel):
+    custom_query: str = ""
+    country: str = ""
+    deep_spy: bool = True
+
+
+class EvaluatePotentialBatchRequest(BaseModel):
+    video_ids: Optional[List[int]] = None
+    limit: int = 5
+    country: str = ""
 
 
 class InspectUrlRequest(BaseModel):
@@ -63,13 +87,37 @@ class ProductCreateRequest(BaseModel):
 
 class CloneJobCreateRequest(BaseModel):
     source_video_id: int
-    product_id: int
-    clone_mode: str = "muse_prompt_remap"
+    product_id: int = 0
+    clone_mode: str = "rea_video_remake"
     prompt_script: str = ""
-    cta_position: str = "bottom_banner"
+    cta_position: str = "clean_organic"
     link_placement_mode: str = "both"
     anti_duplicate: bool = True
     batch_count: int = 1
+    flow_account_id: Optional[int] = None
+    flow_model: str = ""
+    veo_prompt: str = ""
+    scene_plan: Optional[List[Dict[str, Any]]] = None
+
+
+class FlowBrowserLoginRequest(BaseModel):
+    account_id: Optional[int] = None
+    label: str = ""
+    proxy: str = ""
+    tier: str = "Flow Pro"
+
+
+class FlowBulkImportRequest(BaseModel):
+    raw_accounts: str
+    weekly_limit: int = 50
+    tier: str = "Flow Pro"
+
+
+class FlowPromptRequest(BaseModel):
+    video_id: int
+    clone_mode: str = "flow_omni_ingredients"
+    custom_hint: str = ""
+    flow_model: str = "omni_1_2_flash_10s_portrait"
 
 
 class PublishTaskCreateRequest(BaseModel):
@@ -86,6 +134,59 @@ class SettingsUpdateRequest(BaseModel):
     bio_brand_name: Optional[str] = None
     bio_brand_subtitle: Optional[str] = None
     default_crawl_country: Optional[str] = None
+    rea_vlm_enabled: Optional[str] = None
+    rea_vlm_base_url: Optional[str] = None
+    rea_vlm_api_key: Optional[str] = None
+    rea_vlm_model: Optional[str] = None
+    rea_report_lang: Optional[str] = None
+
+
+class AgentReachChannelActionRequest(BaseModel):
+    channel: str
+    operation: str
+
+
+class AgentReachBrowserActionRequest(BaseModel):
+    operation: str
+    param: str = ""
+
+
+class AgentReachConfigureRequest(BaseModel):
+    key: str
+    value: str = ""
+
+
+class AgentReachExecuteRequest(BaseModel):
+    channel: str
+    action: str
+    query: str = ""
+    limit: int = 5
+    save_to_videos: bool = True
+    country: str = "VN"
+
+
+class ReaDecomposeRequest(BaseModel):
+    use_vlm: Optional[bool] = None
+
+
+class ReaVlmFetchModelsRequest(BaseModel):
+    base_url: str
+    api_key: str = ""
+
+
+class MetaShopSearchRequest(BaseModel):
+    query: str = ""
+    country: str = "VN"
+    platform: str = "all"
+    limit: int = 12
+
+
+class MetaShopProductsScanRequest(BaseModel):
+    page_id: str = ""
+    shop_query: str = ""
+    shop_id: Optional[int] = None
+    country: str = "ALL"
+    limit: int = 24
 
 
 @app.get("/api/system/status")
@@ -103,10 +204,15 @@ def get_system_status():
         "ffmpeg_path": muse_service.find_ffmpeg() or "",
         "ytdlp_installed": bool(crawler_service.find_ytdlp()),
         "ytdlp_path": crawler_service.find_ytdlp() or "",
+        "agent_reach_installed": bool(crawler_service.find_agent_reach()),
+        "agent_reach_path": crawler_service.find_agent_reach() or "",
+        "rea_video_installed": bool(muse_service.find_rea_video()),
+        "rea_video_path": muse_service.find_rea_video() or "",
         "playwright_installed": crawler_service.has_playwright(),
         "crawl4ai_installed": crawler_service.has_crawl4ai(),
         "counts": {
             "viral_videos": len(database.list_videos()),
+            "meta_shops": len(database.list_meta_shops()),
             "products": len(database.list_products()),
             "clone_jobs": len(database.list_clone_jobs()),
             "publish_tasks": len(database.list_publish_tasks()),
@@ -118,6 +224,7 @@ def get_system_status():
             "weekly_used": weekly_used,
             "weekly_capacity": weekly_capacity,
         },
+        "flow_pool": flow_service.get_flow_pool_summary(),
         "settings": database.get_settings(),
     }
 
@@ -132,12 +239,105 @@ def update_system_settings(req: SettingsUpdateRequest):
         database.update_setting("bio_brand_subtitle", req.bio_brand_subtitle.strip())
     if req.default_crawl_country is not None:
         database.update_setting("default_crawl_country", req.default_crawl_country.strip())
+    if req.rea_vlm_enabled is not None:
+        database.update_setting("rea_vlm_enabled", req.rea_vlm_enabled.strip())
+    if req.rea_vlm_base_url is not None:
+        database.update_setting("rea_vlm_base_url", req.rea_vlm_base_url.strip())
+    if req.rea_vlm_api_key is not None:
+        database.update_setting("rea_vlm_api_key", req.rea_vlm_api_key.strip())
+    if req.rea_vlm_model is not None:
+        database.update_setting("rea_vlm_model", req.rea_vlm_model.strip())
+    if req.rea_report_lang is not None:
+        database.update_setting("rea_report_lang", req.rea_report_lang.strip())
     return {"ok": True, "settings": database.get_settings()}
+
+
+@app.post("/api/rea-video/fetch-models")
+async def fetch_rea_video_vlm_models(req: ReaVlmFetchModelsRequest):
+    return await muse_service.fetch_vlm_models(req.base_url, req.api_key)
+
+
+@app.get("/api/agent-reach/status")
+async def get_agent_reach_status():
+    return await asyncio.to_thread(crawler_service.get_agent_reach_full_status)
+
+
+@app.post("/api/agent-reach/channel-action")
+async def agent_reach_channel_action(req: AgentReachChannelActionRequest):
+    return await asyncio.to_thread(crawler_service.manage_agent_reach_channel, req.channel, req.operation)
+
+
+@app.post("/api/agent-reach/browser-action")
+async def agent_reach_browser_action(req: AgentReachBrowserActionRequest):
+    return await asyncio.to_thread(crawler_service.manage_agent_reach_browser, req.operation, req.param)
+
+
+@app.post("/api/agent-reach/configure")
+async def agent_reach_configure(req: AgentReachConfigureRequest):
+    return await asyncio.to_thread(crawler_service.configure_agent_reach_key, req.key, req.value)
+
+
+@app.post("/api/agent-reach/execute")
+async def agent_reach_execute(req: AgentReachExecuteRequest):
+    return await asyncio.to_thread(
+        crawler_service.execute_agent_reach_action,
+        req.channel,
+        req.action,
+        req.query,
+        req.limit,
+        req.save_to_videos,
+        req.country,
+    )
 
 
 @app.get("/api/videos")
 def get_videos(platform: Optional[str] = Query(default="all"), search: Optional[str] = Query(default=None)):
-    return {"videos": database.list_videos(platform=platform, search=search)}
+    crawler_service.purge_invalid_and_mockup_videos()
+    vids = database.list_videos(platform=platform, search=search)
+    for v in vids:
+        if not isinstance(v.get("market_intel"), dict):
+            v["market_intel"] = crawler_service.build_market_intel_for_video(v, shops=[], spy_status="baseline")
+    return {"videos": vids}
+
+
+@app.post("/api/videos/evaluate-potential-batch")
+async def evaluate_videos_potential_batch(req: EvaluatePotentialBatchRequest):
+    return await asyncio.to_thread(
+        crawler_service.evaluate_potential_videos_batch,
+        req.video_ids,
+        req.limit,
+        req.country,
+    )
+
+
+@app.post("/api/videos/{video_id}/evaluate-potential")
+async def evaluate_video_potential(video_id: int, req: EvaluatePotentialRequest):
+    res = await asyncio.to_thread(
+        crawler_service.evaluate_video_potential_sync,
+        video_id,
+        req.custom_query,
+        req.country,
+        req.deep_spy,
+    )
+    if not res.get("ok"):
+        raise HTTPException(status_code=400, detail=res.get("error") or "Không thể đánh giá & dò shop cho video này.")
+    return res
+
+
+@app.post("/api/videos/{video_id}/ensure-mp4")
+async def ensure_video_mp4(video_id: int):
+    res = await asyncio.to_thread(crawler_service.ensure_video_playable_mp4, video_id)
+    if not res.get("ok"):
+        raise HTTPException(status_code=400, detail=res.get("error") or "Không thể chuẩn bị luồng phát MP4.")
+    return res
+
+
+@app.post("/api/videos/{video_id}/analyze-ai")
+async def analyze_video_ai(video_id: int):
+    res = await asyncio.to_thread(crawler_service.analyze_single_video_ai, video_id)
+    if not res.get("ok"):
+        raise HTTPException(status_code=400, detail=res.get("error") or "Không thể phân tích AI cho video này.")
+    return res
 
 
 @app.post("/api/videos/crawl")
@@ -147,6 +347,7 @@ async def crawl_videos(req: CrawlRequest):
         platform=req.platform,
         engine=req.engine,
         country=req.country,
+        match_type=req.match_type,
     )
 
 
@@ -155,6 +356,63 @@ async def inspect_url(req: InspectUrlRequest):
     if not req.url.strip():
         raise HTTPException(status_code=400, detail="Vui lòng nhập URL video hợp lệ.")
     return await crawler_service.inspect_or_download_url(req.url, download=req.download)
+
+
+@app.post("/api/videos/{video_id}/rea-decompose")
+async def rea_decompose_video(video_id: int, req: Optional[ReaDecomposeRequest] = None):
+    res = await muse_service.decompose_video_with_rea(video_id, force_vlm=req.use_vlm if req else None)
+    if not res.get("ok"):
+        raise HTTPException(status_code=500, detail=res.get("error") or "rea-video decompose failed")
+    return res
+
+
+@app.get("/api/meta-shops")
+def get_meta_shops(
+    search: Optional[str] = Query(default=None),
+    country: Optional[str] = Query(default=None),
+    platform: Optional[str] = Query(default=None),
+):
+    return {"shops": database.list_meta_shops(search=search, country=country, platform=platform)}
+
+
+@app.get("/api/meta-shops/{shop_id}")
+def get_meta_shop_by_id(shop_id: int):
+    detail = database.get_meta_shop_detail(shop_id)
+    if not detail:
+        raise HTTPException(status_code=404, detail="Không tìm thấy Shop này trong dữ liệu Meta Ads.")
+    return {"ok": True, "shop": detail, "products": detail.get("products") or []}
+
+
+@app.post("/api/meta-shops/search")
+async def search_meta_shops_endpoint(req: MetaShopSearchRequest):
+    return await crawler_service.search_shops_on_meta_ads(
+        query=req.query,
+        country=req.country,
+        platform=req.platform,
+        limit=max(1, min(20, req.limit)),
+    )
+
+
+@app.post("/api/meta-shops/products")
+async def scan_meta_shop_products_endpoint(req: MetaShopProductsScanRequest):
+    res = await crawler_service.crawl_shop_products_on_meta_ads(
+        page_id=req.page_id,
+        shop_query=req.shop_query,
+        shop_id=req.shop_id,
+        country=req.country,
+        limit=max(1, min(40, req.limit)),
+    )
+    if not res.get("ok"):
+        raise HTTPException(status_code=400, detail=res.get("error") or "Không thể quét danh sách sản phẩm của Shop trên Meta Ads.")
+    return res
+
+
+@app.post("/api/meta-shops/products/{shop_product_id}/import-video")
+async def import_meta_shop_product_video_endpoint(shop_product_id: int):
+    res = await asyncio.to_thread(crawler_service.import_shop_product_to_videos, shop_product_id)
+    if not res.get("ok"):
+        raise HTTPException(status_code=400, detail=res.get("error") or "Không thể lưu video sản phẩm này vào kho.")
+    return res
 
 
 @app.get("/api/muse-tokens")
@@ -226,17 +484,112 @@ def remove_product(product_id: int):
     return {"ok": True}
 
 
+@app.get("/api/flow-accounts")
+def get_flow_accounts():
+    return {
+        "accounts": database.list_flow_accounts(),
+        "models": flow_service.get_all_flow_models(),
+        "summary": flow_service.get_flow_pool_summary(),
+    }
+
+
+@app.post("/api/flow/sync-models")
+async def sync_flow_models_endpoint():
+    return await asyncio.to_thread(flow_service.sync_latest_flow_models)
+
+
+@app.post("/api/flow-accounts/login-browser")
+async def login_flow_account_browser(req: FlowBrowserLoginRequest):
+    res = await asyncio.to_thread(
+        flow_service.start_flow_browser_login,
+        req.account_id,
+        req.label,
+        req.proxy,
+        req.tier,
+    )
+    if not res.get("ok"):
+        raise HTTPException(status_code=400, detail=res.get("error") or "Không mở được Chrome cho Google Flow.")
+    return res
+
+
+@app.post("/api/flow-accounts/{account_id}/open-browser")
+async def open_flow_account_browser(account_id: int):
+    res = await asyncio.to_thread(flow_service.open_flow_browser_workspace, account_id)
+    if not res.get("ok"):
+        raise HTTPException(status_code=400, detail=res.get("error") or "Không mở được trình duyệt Flow.")
+    return res
+
+
+@app.post("/api/flow-accounts/{account_id}/verify")
+async def verify_flow_account_endpoint(account_id: int):
+    res = await asyncio.to_thread(flow_service.verify_flow_account, account_id)
+    if "error" in res and not res.get("account"):
+        raise HTTPException(status_code=400, detail=res["error"])
+    return res
+
+
+@app.post("/api/flow-accounts/bulk")
+def import_flow_accounts_bulk(req: FlowBulkImportRequest):
+    res = flow_service.bulk_import_flow_accounts(
+        req.raw_accounts,
+        weekly_limit=req.weekly_limit,
+        tier=req.tier,
+    )
+    if not res.get("ok"):
+        raise HTTPException(status_code=400, detail=res.get("error") or "Không tìm thấy tài khoản Flow hợp lệ.")
+    return {
+        "ok": True,
+        "imported": res["imported"],
+        "accounts": database.list_flow_accounts(),
+        "summary": flow_service.get_flow_pool_summary(),
+    }
+
+
+@app.patch("/api/flow-accounts/{account_id}/toggle")
+def toggle_flow_account(account_id: int):
+    updated = database.toggle_flow_account_status(account_id)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Không tìm thấy tài khoản Flow.")
+    return {"ok": True, "account": updated}
+
+
+@app.delete("/api/flow-accounts/{account_id}")
+def delete_flow_account_endpoint(account_id: int):
+    ok = database.delete_flow_account(account_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Không tìm thấy tài khoản Flow.")
+    return {"ok": True}
+
+
+@app.post("/api/flow/generate-prompt")
+async def generate_flow_veo_prompt(req: FlowPromptRequest):
+    res = await asyncio.to_thread(
+        flow_service.generate_veo_prompt_for_video,
+        req.video_id,
+        req.clone_mode,
+        req.custom_hint,
+        muse_service.find_ffmpeg(),
+        req.flow_model,
+    )
+    if not res.get("ok"):
+        raise HTTPException(status_code=400, detail=res.get("error") or "Không thể tạo Prompt Veo.")
+    return res
+
+
 @app.get("/api/clone-jobs")
 def get_clone_jobs():
     return {"jobs": database.list_clone_jobs()}
 
 
 @app.post("/api/clone-jobs")
-async def create_clone_job(req: CloneJobCreateRequest, background_tasks: BackgroundTasks):
+async def create_clone_job(req: CloneJobCreateRequest):
     video = database.get_video(req.source_video_id)
-    product = database.get_product(req.product_id)
-    if not video or not product:
-        raise HTTPException(status_code=404, detail="Video gốc hoặc sản phẩm không tồn tại.")
+    if not video:
+        raise HTTPException(status_code=404, detail="Video gốc không tồn tại.")
+    if req.product_id and req.product_id > 0:
+        product = database.get_product(req.product_id)
+        if not product:
+            raise HTTPException(status_code=404, detail="Sản phẩm được chọn không tồn tại.")
 
     count = max(1, min(10, req.batch_count))
     created_jobs = []
@@ -245,18 +598,54 @@ async def create_clone_job(req: CloneJobCreateRequest, background_tasks: Backgro
         job = database.create_clone_job(
             {
                 "source_video_id": req.source_video_id,
-                "product_id": req.product_id,
+                "product_id": req.product_id if req.product_id and req.product_id > 0 else 0,
                 "clone_mode": req.clone_mode,
                 "prompt_script": script,
                 "cta_position": req.cta_position,
                 "link_placement_mode": req.link_placement_mode,
                 "anti_duplicate": req.anti_duplicate,
+                "flow_account_id": req.flow_account_id if req.flow_account_id and req.flow_account_id > 0 else None,
+                "flow_model": req.flow_model.strip(),
+                "veo_prompt": req.veo_prompt.strip(),
+                "scene_plan": req.scene_plan or [],
             }
         )
         created_jobs.append(job)
-        background_tasks.add_task(muse_service.run_clone_job, job["id"])
+        _spawn_clone_job_task(int(job["id"]))
 
     return {"ok": True, "jobs": created_jobs}
+
+
+@app.post("/api/clone-jobs/{job_id}/retry")
+async def retry_clone_job(job_id: int, refresh_plan: bool = Query(default=False)):
+    job = database.get_clone_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Không tìm thấy Clone Job.")
+    running = _active_job_tasks.pop(job_id, None)
+    if running and not running.done():
+        running.cancel()
+    upd: Dict[str, Any] = {
+        "status": "queued",
+        "progress": 5,
+        "error_message": "",
+        "output_video_url": "",
+    }
+    if refresh_plan or len(job.get("scene_plan") or []) <= 1:
+        upd["scene_plan"] = []
+    database.update_clone_job(job_id, **upd)
+    _spawn_clone_job_task(job_id)
+    return {"ok": True, "job": database.get_clone_job(job_id)}
+
+
+@app.delete("/api/clone-jobs/{job_id}")
+async def remove_or_cancel_clone_job(job_id: int):
+    running = _active_job_tasks.pop(job_id, None)
+    if running and not running.done():
+        running.cancel()
+    ok = database.delete_clone_job(job_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Không tìm thấy Clone Job.")
+    return {"ok": True}
 
 
 @app.get("/api/publish-tasks")
@@ -265,10 +654,8 @@ def get_publish_tasks():
 
 
 @app.post("/api/publish-tasks/preview")
-def preview_publish_copy(product_id: int, target_platform: str = "facebook_reels", custom_hook: str = ""):
-    product = database.get_product(product_id)
-    if not product:
-        raise HTTPException(status_code=404, detail="Không tìm thấy sản phẩm.")
+def preview_publish_copy(product_id: int = 0, target_platform: str = "facebook_reels", custom_hook: str = ""):
+    product = database.get_product(product_id) if product_id and product_id > 0 else None
     return publisher_service.build_affiliate_copy(product, target_platform, custom_hook)
 
 
