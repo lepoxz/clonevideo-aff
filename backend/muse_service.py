@@ -529,10 +529,10 @@ def _build_fallback_scene_units(
     shots_parsed: List[Dict[str, Any]],
     product_en: str,
 ) -> List[Dict[str, Any]]:
-    """Group contiguous rea-video shots into <=7.6s scene units so every unit fits naturally inside an 8s Google Flow generation."""
+    """Group contiguous rea-video shots into <=7.6s scene units with 100% AI-generated First Frame & End Frame prompts."""
     if not shots_parsed:
         return []
-    subj = product_en or "the exact physical product shown in the attached reference ingredient image"
+    subj = product_en or "the sleek modern featured product with clean unbranded finish"
     groups: List[List[Dict[str, Any]]] = []
     cur_group: List[Dict[str, Any]] = []
     cur_dur = 0.0
@@ -562,15 +562,29 @@ def _build_fallback_scene_units(
             xp = re.sub(r"^Vertical 9:16 [^:]+:\s*", "", str(x.get("prompt") or "").strip())
             rel_beats.append(f"[{round(t_cursor, 1)}s-{t_next}s] {xp or 'Product action showcase'}")
             t_cursor = t_next
+
+        first_desc = re.sub(r"^Vertical 9:16 [^:]+:\s*", "", str(grp[0].get("prompt") or "").strip()) or f"opening view of {subj}"
+        last_desc = re.sub(r"^Vertical 9:16 [^:]+:\s*", "", str(grp[-1].get("prompt") or "").strip()) or f"completed action view of {subj}"
         shot_tag = f"Shot #{s_nums[0]}" if len(s_nums) == 1 else f"Shots #{s_nums[0]}–#{s_nums[-1]}"
+
+        ai_start_p = (
+            f"Vertical 9:16 smartphone photograph recreating the opening camera angle and framing: "
+            f"fresh presenter hands and clean modern environment with {subj} at the start of the action ({first_desc[:180]}). "
+            f"Crisp natural lighting, photorealistic, clean frame with NO text overlays, NO subtitles, NO watermarks, NO brand logos."
+        )
+        ai_end_p = (
+            f"Vertical 9:16 smartphone photograph matching the exact same camera angle, lighting, presenter outfit/hands, and {subj} "
+            f"from the start frame, now showing the completed end state of the action ({last_desc[:180]}). "
+            f"Crisp natural lighting, photorealistic, clean frame with NO text overlays, NO subtitles, NO watermarks, NO brand logos."
+        )
         flow_p = (
-            f"Vertical 9:16 smartphone video ({tdur}s): Using the exact {subj} from the attached reference ingredient image "
-            f"(preserving 100% of its shape, color, and slot layout), a fresh presenter in a clean sunlit modern interior performs the exact action sequence: "
-            f"{' '.join(rel_beats)}. Authentic hand movements, crisp natural foley audio, photorealistic, clean frame with NO text overlays, NO subtitles, NO watermarks, NO logos."
+            f"Vertical 9:16 smartphone video ({tdur}s): Using the exact AI-remade {subj} from the attached reference ingredient image "
+            f"(preserving 100% of its shape, color, and mechanism), a fresh presenter performs the exact action sequence: "
+            f"{' '.join(rel_beats)}. Authentic movement, crisp natural foley audio, photorealistic, clean frame with NO text overlays, NO subtitles, NO watermarks, NO logos."
         )
         frames_p = (
-            f"Smooth continuous physical motion bridging the opening frame to the closing frame ({tdur}s) of {subj}: "
-            f"{' '.join(rel_beats)}. Natural human hand movement and steady product interaction matching start and end states, "
+            f"Smooth continuous physical motion bridging the AI start frame to the AI end frame ({tdur}s) of {subj}: "
+            f"{' '.join(rel_beats)}. Natural movement and steady product interaction matching start and end states, "
             "Vertical 9:16 smartphone footage, photorealistic, natural foley sound, clean frame with NO text overlays, NO subtitles, NO watermarks."
         )
         units.append(
@@ -582,7 +596,10 @@ def _build_fallback_scene_units(
                 "end": en,
                 "target_duration": tdur,
                 "same_scene_as_prev": u_idx > 1,
+                "reuse_prev_end_as_start": False,
                 "action_vi": "; ".join(str(x.get("prompt") or "")[:90] for x in grp)[:240],
+                "ai_start_image_prompt_en": ai_start_p,
+                "ai_end_image_prompt_en": ai_end_p,
                 "flow_prompt_en": flow_p,
                 "frames_prompt_en": frames_p,
             }
@@ -596,7 +613,7 @@ def _synthesize_rea_shot_prompts_with_llm(
     raw_shots: List[Dict[str, Any]],
     storyboard_path: Optional[Path] = None,
 ) -> Dict[str, Any]:
-    """Visually analyze 4-frame per-shot motion strips (Start -> 33% -> 66% -> End) via Multimodal Vision LLM to extract exact product geometry, clean reference frame, per-shot actions, and 2-4 Google Flow Scene Units."""
+    """Visually analyze 4-frame per-shot motion strips (Start -> 33% -> 66% -> End) via Multimodal Vision LLM to design a 100% AI-generated First-Frame -> End-Frame Viral Remake Plan (ZERO source frames uploaded)."""
     mi = video.get("market_intel") if isinstance(video.get("market_intel"), dict) else {}
     prod_name = str(mi.get("product_query") or video.get("title") or "").strip()[:120]
     caption = str(video.get("caption") or video.get("hook_text") or "").strip()[:260]
@@ -623,15 +640,19 @@ def _synthesize_rea_shot_prompts_with_llm(
         f"Metadata Caption (IGNORE engagement bait like 'Comment X for link' — trust ONLY what you physically see across the 4 frames of each shot!): {prod_name} | {caption}\n"
         "Measured Shots:\n"
         + "\n".join(shot_specs)
-        + "\n\nReturn STRICT JSON ONLY (no markdown fences) with this exact schema:\n"
+        + "\n\nWe are building a 100% AI-GENERATED VIRAL REMAKE on Google Flow (Nano Banana 2.1 AI First/End Keyframes -> Omni/Veo First-to-End Video).\n"
+        "We NEVER upload frames from the original video (to prevent copyright/policy violations). Instead, Nano Banana 2.1 will generate brand-new 9:16 AI First Frame & AI End Frame images that recreate the EXACT camera angles, shot framing, lighting mood, product design, and viral physical actions with a FRESH AI presenter/outfit & clean environment!\n"
+        "Return STRICT JSON ONLY (no markdown fences) with this exact schema:\n"
         "{\n"
-        '  "product_en": "Precise physical specification of the real product (exact color, shape, surface finish, visible buttons, slots, dock connectors, paper/output mechanism — NEVER invent lids or parts not visible in the frames!)",\n'
+        '  "product_en": "Precise physical specification of the real product(s) shown (exact color, shape, surface finish, LED light color/strip shape, buttons, slots, connectors, output/mounting mechanism — NO brand names/logos, NEVER invent parts not visible in the frames!)",\n'
+        '  "character_and_room_style_en": "Consistent fresh AI presenter / outfit / hands & clean environment style used across the remake (distinct person/outfit from original creator for 0% identity overlap, while matching the exact time-of-day, setting type, and lighting mood!)",\n'
+        '  "ai_product_anchor_prompt_en": "65-90 word English 9:16 Nano Banana AI Image prompt showing a crystal-clear, unobstructed close-up reference photo of the exact product_en in matching natural lighting on a clean surface/mount so downstream scene keyframes lock 100% onto its exact shape, color, and features. End with: Vertical 9:16 smartphone photography, photorealistic, NO text overlays, NO subtitles, NO watermarks, NO brand logos.",\n'
         '  "best_clean_shot_index": 6,\n'
         '  "best_clean_frame_pos": "first",\n'
         '  "clean_crop_box_pct": [0, 0, 100, 100],\n'
         '  "overlay_text_boxes_pct": [[8, 9, 92, 23]],\n'
         '  "verdict_vi": "Mô tả tiếng Việt chuẩn xác sản phẩm thật sự là gì và diễn biến hành động chi tiết từ đầu đến cuối video",\n'
-        '  "veo_prompt_en": "Summary 95-130 word English 9:16 prompt covering the full story",\n'
+        '  "veo_prompt_en": "Summary 95-130 word English 9:16 prompt covering the full remade story",\n'
         '  "shots": {\n'
         '    "1": "Exact English visual & motion description from Start frame to End frame of Shot #1 (who/hands, exact physical action, camera framing, NO caption text)",\n'
         '    "2": "..."\n'
@@ -645,26 +666,29 @@ def _synthesize_rea_shot_prompts_with_llm(
         '      "end": 4.33,\n'
         '      "target_duration": 4.33,\n'
         '      "same_scene_as_prev": false,\n'
-        '      "action_vi": "Mô tả chi tiết hành động vật lý cần tái hiện ở cụm cảnh này",\n'
-        '      "flow_prompt_en": "85-125 word English Ingredients-to-Video prompt for Google Flow (Portrait 9:16). Must: (1) Lock 100% onto the exact physical product from the attached reference ingredient image, (2) Use a fresh presenter & clean modern room aesthetic (changing character/room while keeping the EXACT physical actions & shot beats [0.0s-X.Xs] ... [X.Xs-Y.Ys] of these shots!), (3) End with: Vertical 9:16 smartphone footage, photorealistic, natural foley sound, clean frame with NO text overlays, NO subtitles, NO watermarks, NO logos.",\n'
-        '      "frames_prompt_en": "65-100 word English Start-Frame-to-End-Frame transition prompt describing the exact continuous physical motion, hand movement, and product interaction bridging the first frame of shot_indices[0] smoothly to the last frame of shot_indices[-1]. End with: Vertical 9:16 smartphone footage, photorealistic, natural foley sound, clean frame with NO text overlays, NO subtitles, NO watermarks."\n'
+        '      "reuse_prev_end_as_start": false,\n'
+        '      "action_vi": "Mô tả chi tiết góc máy & hành động vật lý cần tái hiện ở cụm cảnh này",\n'
+        '      "ai_start_image_prompt_en": "65-95 word English 9:16 AI First Frame (Bắt đầu) image generation prompt recreating the EXACT opening camera angle, shot distance (extreme close-up / medium / wide / POV), lighting mood, fresh AI presenter/hands (character_and_room_style_en), and exact physical state of product_en (matching the attached product reference image) at the START of shot_indices[0]. End with: Vertical 9:16 smartphone photography, photorealistic, clean frame with NO text overlays, NO subtitles, NO watermarks, NO brand logos.",\n'
+        '      "ai_end_image_prompt_en": "65-95 word English 9:16 AI End Frame (Kết thúc) image generation prompt keeping the EXACT same camera angle, background, lighting, and AI presenter/hands from the attached Start Frame image while showing the exact completed physical state of product_en at the END of shot_indices[-1] (e.g. cloth lifted revealing product, LED switched on glowing neon pink/cyan, glossy photo printed & held up, cyclist/runner further down the path). End with: Vertical 9:16 smartphone photography, photorealistic, clean frame with NO text overlays, NO subtitles, NO watermarks, NO brand logos.",\n'
+        '      "flow_prompt_en": "85-120 word English Ingredients-to-Video prompt for Google Flow (Portrait 9:16) locking onto the attached AI product reference image and performing the exact physical action beats [0.0s-X.Xs] ... [X.Xs-Y.Ys] with a fresh presenter. End with: Vertical 9:16 smartphone footage, photorealistic, natural foley sound, clean frame with NO text overlays, NO subtitles, NO watermarks, NO logos.",\n'
+        '      "frames_prompt_en": "65-95 word English First-Frame-to-End-Frame video motion prompt describing the smooth continuous physical movement, hand/body motion, camera tracking, and product behavior bridging ai_start_image_prompt_en to ai_end_image_prompt_en. End with: Vertical 9:16 smartphone footage, photorealistic, natural foley sound, clean frame with NO text overlays, NO subtitles, NO watermarks."\n'
         "    }\n"
         "  ]\n"
         "}\n"
         "CRITICAL RULES:\n"
-        "1. Read each SHOT box strictly LEFT-TO-RIGHT `[Frame 1 Start -> Frame 2 (33%) -> Frame 3 (66%) -> Frame 4 End]`: if Frame 1 shows a cloth/cover hiding an item and Frame 4 shows the cloth lifted up revealing the product underneath, describe lifting the cloth upward to reveal the product (never confuse reveal with folding an empty cloth!). Similarly, watch front trays sliding out/in and glossy photos ejecting from the front slot and being held up to the lens.\n"
-        "2. Group ALL shots (1..N) in chronological order into 2–4 contiguous `scene_units` (or 1 unit if total video <= 7.5s). Every unit MUST have `target_duration` (`end - start`) <= 7.9 seconds so each unit renders cleanly inside an 8-second Google Flow clip! Set `same_scene_as_prev: true` ONLY when a unit continues on the exact same desk/surface immediately after the previous unit's end state; set `false` when camera location/setup changes (e.g. cutting from wide standing table to close-up desk).\n"
-        "3. Every unit's `flow_prompt_en` MUST explicitly reference the attached clean product ingredient image (exact color, rectangular shape, recessed top phone slot, front output slit, bottom cassette tray) so the product looks 100% identical in every scene while using a fresh presenter & clean room. And every unit's `frames_prompt_en` MUST concisely describe the continuous Start-to-End physical bridge motion in 65–100 words ending with 'Vertical 9:16 smartphone footage, photorealistic, natural foley sound, clean frame with NO text overlays, NO subtitles, NO watermarks.'\n"
-        "4. For `best_clean_shot_index` and `best_clean_frame_pos` ('first' = leftmost Frame 1, 'last' = rightmost Frame 4): inspect Frame 1 and Frame 4 of every shot and pick the SPECIFIC single frame where the full product sits completely unobstructed with ZERO text overlays and ZERO hands covering it (only use `clean_crop_box_pct` != [0,0,100,100] if literally every single frame in the entire video has text overlay).\n"
-        "5. For `overlay_text_boxes_pct`: list `0..100` percentage bounding boxes `[[x1, y1, x2, y2], ...]` covering any burned-in social-media hook/caption text bands visible on shots (e.g., `[[8, 9, 92, 23]]`), or `[]` if frames are completely clean."
+        "1. Read each SHOT box strictly LEFT-TO-RIGHT `[Frame 1 Start -> Frame 2 (33%) -> Frame 3 (66%) -> Frame 4 End]` to capture the true physical action direction (e.g. lifting cover upward to reveal product, pressing button to turn LED strip on, docking phone & ejecting photo, riding/running at night with glowing safety lights).\n"
+        "2. NEVER create a scene unit or End Frame from a pure black/solid text-only outro card (e.g., a final 0.5s black screen saying 'What do you bring?' or 'Link in bio')! Always end the final scene unit on real visual product/human action, folding any tiny trailing 0.3-0.8s black outro timestamp into the real action shot.\n"
+        "3. Group ALL visual shots into 2–4 chronological `scene_units` (or 1 unit if total video <= 7.5s) where every unit has `target_duration` <= 7.9s. Group shots that share a similar camera setup into the same unit so Start Frame -> End Frame forms one natural continuous shot without jarring camera teleports inside a single clip! Cut to a new `scene_unit` whenever camera angle/location jumps dramatically (e.g. close-up hands installing clip -> wide shot running/riding outdoors).\n"
+        "4. Set `reuse_prev_end_as_start: true` ONLY when `unit_index > 1` AND this unit starts at the EXACT same camera angle, distance, and pose where the previous unit's End Frame finished (so reusing previous End Frame makes a 100% seamless cut!). Set `reuse_prev_end_as_start: false` whenever camera angle or framing changes between units.\n"
+        "5. Every `ai_start_image_prompt_en`, `ai_end_image_prompt_en`, and `frames_prompt_en` MUST pass Google Flow's strict safety classifier (`PUBLIC_ERROR_UNSAFE_GENERATION`): NEVER use gendered/person-portrait nouns like 'female', 'woman', 'girl', 'man', 'boy', 'face', 'portrait', or 'celebrity'! Instead, describe human interaction using authentic viral-ad POV hands-in-action, dynamic low-angle footwear/legs-in-stride, or over-the-shoulder framing where human faces are out of frame while keeping 100% of the original shot's camera angle, lighting, environment, and physical product action! Zero burned-in text, zero brand logos."
     )
 
     raw_txt = ""
     if storyboard_path and storyboard_path.is_file():
         ex_v = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         try:
-            fut_v = ex_v.submit(crawler_service.call_vision_llm, str(storyboard_path), prompt, 46.0, 3600)
-            raw_txt = (fut_v.result(timeout=49.0) or "").strip()
+            fut_v = ex_v.submit(crawler_service.call_vision_llm, str(storyboard_path), prompt, 48.0, 4200)
+            raw_txt = (fut_v.result(timeout=51.0) or "").strip()
         except Exception:
             raw_txt = ""
         finally:
@@ -673,8 +697,8 @@ def _synthesize_rea_shot_prompts_with_llm(
     if not raw_txt:
         ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         try:
-            fut = ex.submit(crawler_service._call_configured_llm, prompt, 14.0)
-            raw_txt = (fut.result(timeout=15.5) or "").strip()
+            fut = ex.submit(crawler_service._call_configured_llm, prompt, 18.0)
+            raw_txt = (fut.result(timeout=19.5) or "").strip()
         except Exception:
             raw_txt = ""
         finally:
@@ -728,6 +752,15 @@ def _synthesize_rea_shot_prompts_with_llm(
                     except (TypeError, ValueError):
                         pass
 
+        prod_spec = str(parsed.get("product_en") or "").strip()
+        char_style = str(parsed.get("character_and_room_style_en") or "").strip()
+        anchor_prompt = str(parsed.get("ai_product_anchor_prompt_en") or "").strip()
+        if not anchor_prompt and prod_spec:
+            anchor_prompt = (
+                f"Vertical 9:16 studio-lit smartphone product photograph of {prod_spec}, resting cleanly in full unobstructed view "
+                f"with crisp natural lighting and realistic material texture. Photorealistic, NO text overlays, NO subtitles, NO watermarks, NO brand logos."
+            )
+
         raw_units = parsed.get("scene_units") if isinstance(parsed.get("scene_units"), list) else []
         clean_units: List[Dict[str, Any]] = []
         for idx_u, u in enumerate(raw_units[:6], start=1):
@@ -746,6 +779,20 @@ def _synthesize_rea_shot_prompts_with_llm(
                     s_idxs.append(int(sx))
                 except (TypeError, ValueError):
                     pass
+            ai_start_p = str(u.get("ai_start_image_prompt_en") or "").strip()
+            ai_end_p = str(u.get("ai_end_image_prompt_en") or "").strip()
+            if not ai_start_p:
+                ai_start_p = (
+                    f"Vertical 9:16 smartphone photograph recreating the opening camera angle of Scene {idx_u}: "
+                    f"{char_style or 'fresh presenter hands in clean lighting'} with {prod_spec or 'the featured product'} at the start of: {frames_fp[:180]}. "
+                    "Photorealistic, clean frame with NO text overlays, NO subtitles, NO watermarks, NO brand logos."
+                )
+            if not ai_end_p:
+                ai_end_p = (
+                    f"Vertical 9:16 smartphone photograph matching the exact same camera angle, lighting, and presenter from the Start Frame, "
+                    f"showing the completed end state of: {frames_fp[:180]}. "
+                    "Photorealistic, clean frame with NO text overlays, NO subtitles, NO watermarks, NO brand logos."
+                )
             clean_units.append(
                 {
                     "unit_index": idx_u,
@@ -755,14 +802,19 @@ def _synthesize_rea_shot_prompts_with_llm(
                     "end": en_u,
                     "target_duration": td_u,
                     "same_scene_as_prev": bool(u.get("same_scene_as_prev")) if idx_u > 1 else False,
+                    "reuse_prev_end_as_start": bool(u.get("reuse_prev_end_as_start")) if idx_u > 1 else False,
                     "action_vi": str(u.get("action_vi") or "").strip(),
+                    "ai_start_image_prompt_en": ai_start_p,
+                    "ai_end_image_prompt_en": ai_end_p,
                     "flow_prompt_en": fp,
                     "frames_prompt_en": frames_fp,
                 }
             )
 
         return {
-            "product_en": str(parsed.get("product_en") or "").strip(),
+            "product_en": prod_spec,
+            "character_and_room_style_en": char_style,
+            "ai_product_anchor_prompt_en": anchor_prompt,
             "best_clean_shot_index": best_idx,
             "best_clean_frame_pos": best_pos,
             "clean_crop_box_pct": crop_box,
@@ -979,6 +1031,8 @@ def _run_rea_decompose_sync(video_id: int, force_vlm: Optional[bool] = None) -> 
 
     verdict_vi = str(vision_enrichment.get("verdict_vi") or "").strip()
     product_en = str(vision_enrichment.get("product_en") or "").strip()
+    character_and_room_style_en = str(vision_enrichment.get("character_and_room_style_en") or "").strip()
+    ai_product_anchor_prompt_en = str(vision_enrichment.get("ai_product_anchor_prompt_en") or "").strip()
     veo_prompt_en = str(vision_enrichment.get("veo_prompt_en") or "").strip()
     best_clean_shot_index = int(vision_enrichment.get("best_clean_shot_index") or 0)
     best_clean_frame_pos = str(vision_enrichment.get("best_clean_frame_pos") or "first")
@@ -1098,7 +1152,7 @@ def _run_rea_decompose_sync(video_id: int, force_vlm: Optional[bool] = None) -> 
 
     final_verdict = verdict_vi or measured_verdict_vi
     final_vlm_note = (
-        f"Vision 4-Frame/Shot đã lập kế hoạch {len(scene_units)} Cụm Cảnh Google Flow · Khoá ảnh SP sạch ở Shot #{best_clean_shot_index}"
+        f"Vision 4-Frame/Shot đã lập {len(scene_units)} Cụm Cảnh Remake AI (Tự tạo Ảnh Đầu → Cuối mới, 0% lấy ảnh gốc)"
         if product_en and scene_units
         else (
             vlm_fallback_reason
@@ -1110,6 +1164,8 @@ def _run_rea_decompose_sync(video_id: int, force_vlm: Optional[bool] = None) -> 
         "source_note": source_note,
         "verdict": final_verdict,
         "product_en": product_en,
+        "character_and_room_style_en": character_and_room_style_en,
+        "ai_product_anchor_prompt_en": ai_product_anchor_prompt_en,
         "best_clean_shot_index": best_clean_shot_index,
         "best_clean_frame_pos": best_clean_frame_pos,
         "clean_crop_box_pct": clean_crop_box_pct,
@@ -1150,6 +1206,56 @@ def _run_rea_decompose_sync(video_id: int, force_vlm: Optional[bool] = None) -> 
         "video": updated_video,
         "breakdown": breakdown_payload,
     }
+
+
+def upgrade_rea_scene_units_for_ai_remake(video_id: int) -> Optional[Dict[str, Any]]:
+    """Fast ~12s Vision upgrade when breakdown.json already exists on disk but lacks AI Start/End Remake prompts."""
+    video = database.get_video(video_id)
+    if not video:
+        return None
+    out_dir = REA_OUTPUTS_DIR / f"video_{video_id}"
+    breakdown_path = out_dir / "breakdown.json"
+    if not breakdown_path.is_file():
+        res = _run_rea_decompose_sync(video_id, force_vlm=False)
+        return res.get("video") if res.get("ok") else None
+    try:
+        raw_bd = json.loads(breakdown_path.read_text(encoding="utf-8"))
+        summary = raw_bd.get("summary") or {}
+        raw_shots = raw_bd.get("shots") or []
+        if not raw_shots:
+            return None
+        sb_file = out_dir / "motion_storyboard.jpg"
+        if not sb_file.is_file():
+            sb_file = _build_motion_storyboard_sheet(out_dir, raw_shots) or (out_dir / "storyboard.jpg")
+        enrichment = _synthesize_rea_shot_prompts_with_llm(
+            video, summary, raw_shots, storyboard_path=sb_file if sb_file and sb_file.is_file() else None
+        )
+        if not enrichment or not enrichment.get("scene_units"):
+            return None
+        cur_bd = dict(video.get("rea_breakdown") or {})
+        for k in (
+            "product_en",
+            "character_and_room_style_en",
+            "ai_product_anchor_prompt_en",
+            "verdict_vi",
+            "veo_prompt_en",
+            "scene_units",
+        ):
+            if enrichment.get(k):
+                if k == "verdict_vi":
+                    cur_bd["verdict"] = enrichment[k]
+                else:
+                    cur_bd[k] = enrichment[k]
+        cur_bd["vlm_note"] = (
+            f"Vision 4-Frame/Shot đã lập {len(enrichment['scene_units'])} Cụm Cảnh Remake AI "
+            "(Tự tạo Ảnh Đầu → Cuối mới, 0% lấy ảnh gốc)"
+        )
+        return database.update_video(
+            video_id,
+            rea_breakdown_json=json.dumps(cur_bd, ensure_ascii=False),
+        )
+    except Exception:
+        return None
 
 
 async def decompose_video_with_rea(video_id: int, force_vlm: Optional[bool] = None) -> Dict[str, Any]:
@@ -1472,15 +1578,15 @@ async def run_clone_job(job_id: int) -> None:
                     }
                 )
 
-            clone_mode_val = str(job.get("clone_mode") or "flow_omni_ingredients")
+            clone_mode_val = str(job.get("clone_mode") or "flow_frames_start_end")
             acc_email_lbl = flow_acc.get("email") or flow_acc.get("label") or f"Acc #{flow_acc['id']}"
-            if clone_mode_val in ("flow_agent_auto", "flow_agent"):
-                acc_display = f"🤖 Flow Agent · {len(live_scene_plan)} cảnh · {acc_email_lbl}"[:75]
-            elif clone_mode_val == "flow_frames_start_end":
-                acc_display = f"🎯 First–End Frame · {len(live_scene_plan)} cảnh · {acc_email_lbl}"[:75]
+            if clone_mode_val in ("flow_frames_start_end", "flow_agent_auto", "flow_ai_frames_remake"):
+                acc_display = f"🎨 AI Remake Đầu→Cuối · {len(live_scene_plan)} cảnh · {acc_email_lbl}"[:75]
+            elif clone_mode_val == "flow_agent":
+                acc_display = f"🤖 Flow Agent Remake · {len(live_scene_plan)} cảnh · {acc_email_lbl}"[:75]
             else:
                 acc_display = (
-                    f"Flow ({len(live_scene_plan)} cảnh · {chosen_flow_model[:15]}) · {acc_email_lbl}"
+                    f"🎨 Flow Remake ({len(live_scene_plan)} cảnh · {chosen_flow_model[:12]}) · {acc_email_lbl}"
                 )[:75]
             database.update_clone_job(
                 job_id,

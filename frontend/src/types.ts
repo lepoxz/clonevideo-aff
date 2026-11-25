@@ -19,7 +19,11 @@ export interface FlowSceneUnit {
   end: number;
   target_duration: number;
   same_scene_as_prev?: boolean;
+  reuse_prev_end_as_start?: boolean;
   action_vi?: string;
+  ai_product_anchor_prompt_en?: string;
+  ai_start_image_prompt_en?: string;
+  ai_end_image_prompt_en?: string;
   flow_prompt_en: string;
   frames_prompt_en?: string;
   ref_url?: string;
@@ -34,6 +38,8 @@ export interface ReaBreakdown {
   source_note: string;
   verdict: string;
   product_en?: string;
+  character_and_room_style_en?: string;
+  ai_product_anchor_prompt_en?: string;
   best_clean_shot_index?: number;
   best_clean_frame_pos?: string;
   clean_crop_box_pct?: number[];

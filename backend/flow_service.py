@@ -1297,35 +1297,65 @@ def extract_clean_scene_boundary_frames(
 
 def build_flow_scene_plan_for_video(
     video_id: int,
-    clone_mode: str = "flow_omni_ingredients",
+    clone_mode: str = "flow_frames_start_end",
     custom_hint: str = "",
     ffmpeg_bin: Optional[str] = None,
     flow_model: str = "omni_1_2_flash_10s_portrait",
     override_scene_plan: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
-    """Build a complete multi-scene Google Flow execution plan grounded in rea-video's 4-frame per-shot breakdown + clean product anchor."""
+    """Build a 100% AI-Generated First-Frame -> End-Frame Viral Remake plan grounded in rea-video shots (ZERO source frames uploaded to Google Flow)."""
     video = database.get_video(video_id)
     if not video:
         return {"ok": False, "error": f"Không tìm thấy video #{video_id}."}
 
     bd = video.get("rea_breakdown") if isinstance(video.get("rea_breakdown"), dict) else {}
-    # If rea-video breakdown or scene_units hasn't been generated yet, run rea-video 4-frame Vision decomposition automatically
-    if not bd.get("scene_units"):
+    existing_units = bd.get("scene_units") if isinstance(bd.get("scene_units"), list) else []
+    has_ai_frame_prompts = any(
+        isinstance(u, dict) and str(u.get("ai_start_image_prompt_en") or "").strip()
+        for u in existing_units
+    )
+    if not existing_units or not has_ai_frame_prompts:
         try:
             import muse_service
 
-            rea_res = muse_service._run_rea_decompose_sync(video_id, force_vlm=False)
-            if rea_res.get("ok") and rea_res.get("video"):
-                video = rea_res["video"]
-                bd = video.get("rea_breakdown") if isinstance(video.get("rea_breakdown"), dict) else {}
+            if existing_units or (MEDIA_DIR / "rea_outputs" / f"video_{video_id}" / "breakdown.json").is_file():
+                upgraded_vid = muse_service.upgrade_rea_scene_units_for_ai_remake(video_id)
+                if upgraded_vid:
+                    video = upgraded_vid
+                    bd = video.get("rea_breakdown") if isinstance(video.get("rea_breakdown"), dict) else {}
+            if not bd.get("scene_units"):
+                rea_res = muse_service._run_rea_decompose_sync(video_id, force_vlm=False)
+                if rea_res.get("ok") and rea_res.get("video"):
+                    video = rea_res["video"]
+                    bd = video.get("rea_breakdown") if isinstance(video.get("rea_breakdown"), dict) else {}
         except Exception:
             pass
 
-    ref_jpg = extract_reference_frame_for_video(video_id, ffmpeg_bin)
-    ref_url = f"/media/flow_refs/{Path(ref_jpg).name}" if ref_jpg else (video.get("thumbnail_url") or "")
-
     product_en = str(bd.get("product_en") or "").strip()
+    char_style_en = str(bd.get("character_and_room_style_en") or "").strip()
+    ai_anchor_prompt = str(bd.get("ai_product_anchor_prompt_en") or "").strip()
+    if not ai_anchor_prompt:
+        ai_anchor_prompt = (
+            f"Vertical 9:16 studio-lit smartphone product photograph of {product_en or 'the sleek modern featured product'}, "
+            "resting cleanly in full unobstructed view with crisp natural lighting and realistic material texture. "
+            "Photorealistic, NO text overlays, NO subtitles, NO watermarks, NO brand logos."
+        )
     raw_units = bd.get("scene_units") if isinstance(bd.get("scene_units"), list) else []
+
+    def _default_ai_start_prompt(idx_s: int, base_motion: str) -> str:
+        return (
+            f"Vertical 9:16 smartphone photograph recreating the exact opening camera angle of Scene {idx_s}: "
+            f"{char_style_en or 'fresh presenter hands and clean modern lighting'} with {product_en or 'the featured product'} "
+            f"at the beginning of the action ({base_motion[:180]}). "
+            "Photorealistic, clean frame with NO text overlays, NO subtitles, NO watermarks, NO brand logos."
+        )
+
+    def _default_ai_end_prompt(base_motion: str) -> str:
+        return (
+            "Vertical 9:16 smartphone photograph matching the exact same camera angle, background, lighting, and presenter "
+            f"from the attached Start Frame image, showing the completed closing state of ({base_motion[:180]}). "
+            "Photorealistic, clean frame with NO text overlays, NO subtitles, NO watermarks, NO brand logos."
+        )
 
     # Respect user-customized scene prompts from the UI if valid and non-bait
     usable_override: List[Dict[str, Any]] = []
@@ -1333,11 +1363,23 @@ def build_flow_scene_plan_for_video(
         for idx_o, uo in enumerate(override_scene_plan, start=1):
             if not isinstance(uo, dict):
                 continue
-            fp_o = str(uo.get("flow_prompt_en") or "").strip()
+            fp_o = str(uo.get("flow_prompt_en") or uo.get("frames_prompt_en") or "").strip()
             if fp_o and not is_stale_or_bait_veo_prompt(fp_o, video):
                 st_o = round(float(uo.get("start") or 0.0), 2)
                 en_o = round(float(uo.get("end") or (st_o + 4.5)), 2)
                 td_o = round(max(2.0, min(7.9, float(uo.get("target_duration") or (en_o - st_o) or 4.5))), 2)
+                fr_o = str(uo.get("frames_prompt_en") or fp_o).strip()
+                raw_match = raw_units[idx_o - 1] if idx_o - 1 < len(raw_units) and isinstance(raw_units[idx_o - 1], dict) else {}
+                ai_s_o = str(uo.get("ai_start_image_prompt_en") or raw_match.get("ai_start_image_prompt_en") or "").strip() or _default_ai_start_prompt(idx_o, fr_o)
+                ai_e_o = str(uo.get("ai_end_image_prompt_en") or raw_match.get("ai_end_image_prompt_en") or "").strip() or _default_ai_end_prompt(fr_o)
+                reuse_prev_o = (
+                    bool(uo.get("reuse_prev_end_as_start"))
+                    if "reuse_prev_end_as_start" in uo
+                    else bool(raw_match.get("reuse_prev_end_as_start"))
+                ) if idx_o > 1 else False
+                # Preserve ONLY previously AI-generated frame URLs (never source-video v{id}_u{k}_start screenshots!)
+                prev_s_url = str(uo.get("start_frame_url") or "")
+                prev_e_url = str(uo.get("end_frame_url") or "")
                 usable_override.append(
                     {
                         "unit_index": idx_o,
@@ -1347,28 +1389,31 @@ def build_flow_scene_plan_for_video(
                         "end": en_o,
                         "target_duration": td_o,
                         "same_scene_as_prev": bool(uo.get("same_scene_as_prev")) if idx_o > 1 else False,
+                        "reuse_prev_end_as_start": reuse_prev_o,
                         "action_vi": str(uo.get("action_vi") or ""),
+                        "ai_product_anchor_prompt_en": str(uo.get("ai_product_anchor_prompt_en") or ai_anchor_prompt),
+                        "ai_start_image_prompt_en": ai_s_o,
+                        "ai_end_image_prompt_en": ai_e_o,
                         "flow_prompt_en": fp_o,
-                        "frames_prompt_en": str(uo.get("frames_prompt_en") or fp_o).strip(),
-                        "ref_url": ref_url,
+                        "frames_prompt_en": fr_o,
+                        "start_frame_url": prev_s_url if "_ai_" in prev_s_url else "",
+                        "end_frame_url": prev_e_url if "_ai_" in prev_e_url else "",
+                        "ref_url": "",
                     }
                 )
 
     scene_units: List[Dict[str, Any]] = usable_override if usable_override else []
     if not scene_units:
         for idx_u, u in enumerate(raw_units, start=1):
-            if not isinstance(u, dict) or not str(u.get("flow_prompt_en") or "").strip():
+            if not isinstance(u, dict) or not str(u.get("flow_prompt_en") or u.get("frames_prompt_en") or "").strip():
                 continue
             st_u = round(float(u.get("start") or 0.0), 2)
             en_u = round(float(u.get("end") or (st_u + 4.5)), 2)
             td_u = round(max(2.0, min(7.9, float(u.get("target_duration") or (en_u - st_u) or 4.5))), 2)
-            fp_u = str(u.get("flow_prompt_en") or "").strip()
+            fp_u = str(u.get("flow_prompt_en") or u.get("frames_prompt_en") or "").strip()
             frames_fp_u = str(u.get("frames_prompt_en") or fp_u).strip()
-            if product_en and clone_mode in ("flow_omni_ingredients", "flow_veo_i2v") and "reference" not in fp_u.lower():
-                fp_u = (
-                    f"Using the exact physical product shown in the attached reference ingredient image ({product_en}, "
-                    f"preserving 100% of its exact rectangular shape, color, and slot layout): {fp_u}"
-                )
+            ai_s_u = str(u.get("ai_start_image_prompt_en") or "").strip() or _default_ai_start_prompt(idx_u, frames_fp_u)
+            ai_e_u = str(u.get("ai_end_image_prompt_en") or "").strip() or _default_ai_end_prompt(frames_fp_u)
             scene_units.append(
                 {
                     "unit_index": idx_u,
@@ -1378,17 +1423,23 @@ def build_flow_scene_plan_for_video(
                     "end": en_u,
                     "target_duration": td_u,
                     "same_scene_as_prev": bool(u.get("same_scene_as_prev")) if idx_u > 1 else False,
+                    "reuse_prev_end_as_start": bool(u.get("reuse_prev_end_as_start")) if idx_u > 1 else False,
                     "action_vi": str(u.get("action_vi") or ""),
+                    "ai_product_anchor_prompt_en": ai_anchor_prompt,
+                    "ai_start_image_prompt_en": ai_s_u,
+                    "ai_end_image_prompt_en": ai_e_u,
                     "flow_prompt_en": fp_u,
                     "frames_prompt_en": frames_fp_u,
-                    "ref_url": ref_url,
+                    "start_frame_url": "",
+                    "end_frame_url": "",
+                    "ref_url": "",
                 }
             )
 
     # Single-unit fallback if video had no shots
     if not scene_units:
         fallback_p = str(bd.get("veo_prompt_en") or "").strip() or (
-            f"Vertical 9:16 smartphone video showcasing {product_en or 'the exact product shown in the reference ingredient image'} "
+            f"Vertical 9:16 smartphone video showcasing {product_en or 'the sleek featured product'} "
             "in a sunlit modern room with natural human hand interaction. Photorealistic, crisp foley sound, clean frame with NO text overlays, NO subtitles, NO watermarks, NO logos."
         )
         dur_v = round(max(4.0, min(7.8, float(bd.get("duration") or 6.5))), 2)
@@ -1401,10 +1452,16 @@ def build_flow_scene_plan_for_video(
                 "end": dur_v,
                 "target_duration": dur_v,
                 "same_scene_as_prev": False,
-                "action_vi": "Trình diễn trực quan sản phẩm từ ảnh mẫu sạch",
+                "reuse_prev_end_as_start": False,
+                "action_vi": "Tự dựng Ảnh Đầu → Cuối mới & trình diễn trực quan sản phẩm",
+                "ai_product_anchor_prompt_en": ai_anchor_prompt,
+                "ai_start_image_prompt_en": _default_ai_start_prompt(1, fallback_p),
+                "ai_end_image_prompt_en": _default_ai_end_prompt(fallback_p),
                 "flow_prompt_en": fallback_p,
                 "frames_prompt_en": fallback_p,
-                "ref_url": ref_url,
+                "start_frame_url": "",
+                "end_frame_url": "",
+                "ref_url": "",
             }
         ]
 
@@ -1418,23 +1475,22 @@ def build_flow_scene_plan_for_video(
     if effective_hint and not usable_override:
         for u in scene_units:
             u["flow_prompt_en"] = f"{u['flow_prompt_en']} Styling note: {effective_hint}."
-            if u.get("frames_prompt_en"):
-                u["frames_prompt_en"] = f"{u['frames_prompt_en']} Styling note: {effective_hint}."
+            u["frames_prompt_en"] = f"{u['frames_prompt_en']} Styling note: {effective_hint}."
+            u["ai_start_image_prompt_en"] = f"{u['ai_start_image_prompt_en']} Styling note: {effective_hint}."
+            u["ai_end_image_prompt_en"] = f"{u['ai_end_image_prompt_en']} Styling note: {effective_hint}."
 
-    overlay_boxes = bd.get("overlay_text_boxes_pct") if isinstance(bd.get("overlay_text_boxes_pct"), list) else []
     for u in scene_units:
-        s_path, e_path, s_url, e_url = extract_clean_scene_boundary_frames(
-            video_id, u, overlay_boxes, ffmpeg_bin
-        )
-        u["start_frame_path"] = s_path or ref_jpg
-        u["end_frame_path"] = e_path or s_path or ref_jpg
-        u["start_frame_url"] = s_url or ref_url
-        u["end_frame_url"] = e_url or s_url or ref_url
+        # Strict Zero-Source-Frame-Upload Policy: never attach screenshots from the source video
+        u["start_frame_path"] = ""
+        u["end_frame_path"] = ""
         if not str(u.get("frames_prompt_en") or "").strip():
             u["frames_prompt_en"] = u["flow_prompt_en"]
 
     combined_veo_prompt = "\n\n".join(
-        f"[{u['title_vi']} · {u['target_duration']}s]\n{u['flow_prompt_en']}"
+        f"[{u['title_vi']} · {u['target_duration']}s]\n"
+        f"• AI First Frame: {u['ai_start_image_prompt_en']}\n"
+        f"• AI End Frame: {u['ai_end_image_prompt_en']}\n"
+        f"• Motion Bridge: {u['frames_prompt_en']}"
         for u in scene_units
     )
 
@@ -1442,10 +1498,11 @@ def build_flow_scene_plan_for_video(
         "ok": True,
         "video_id": video_id,
         "product_en": product_en,
+        "ai_product_anchor_prompt_en": ai_anchor_prompt,
         "veo_prompt": combined_veo_prompt,
         "scene_units": scene_units,
-        "reference_frame_url": ref_url,
-        "reference_frame_path": ref_jpg,
+        "reference_frame_url": "",
+        "reference_frame_path": "",
     }
 
 
@@ -2045,16 +2102,24 @@ class _FlowBrowserSession:
 
 
 async def _dismiss_overlays(pg: Any) -> None:
-    for _ in range(3):
+    for _ in range(4):
         bd = pg.locator(".cdk-overlay-backdrop-showing")
-        if await bd.count() == 0:
+        open_pop = pg.locator(
+            '.cdk-overlay-container button.asset-item:visible, '
+            '.cdk-overlay-container [role="menu"]:visible, '
+            '.cdk-overlay-container button.sidebar-upload-btn:visible'
+        )
+        if await bd.count() == 0 and await open_pop.count() == 0:
             break
         try:
             await pg.keyboard.press("Escape")
-            await pg.wait_for_timeout(300)
+            await pg.wait_for_timeout(280)
             if await bd.count() > 0:
-                await bd.first.click(force=True, timeout=2000)
-                await pg.wait_for_timeout(250)
+                await bd.first.click(force=True, timeout=1800)
+                await pg.wait_for_timeout(240)
+            elif await open_pop.count() > 0:
+                await pg.mouse.click(8, 8)
+                await pg.wait_for_timeout(260)
         except Exception:
             break
 
@@ -2345,7 +2410,7 @@ async def _attach_ingredients_on_flow_page(pg: Any, ingredient_paths: List[str])
 
 
 async def _fill_flow_prompt_box(pg: Any, prompt_text: str) -> bool:
-    """Clear and fill .ProseMirror or fallback textbox without triggering premature Enter submission."""
+    """Clear and fill .ProseMirror or fallback textbox, verifying text actually landed in the editor."""
     await _dismiss_overlays(pg)
     clean_text = re.sub(r"\s*\n+\s*", " ", (prompt_text or "")).strip()
     for inp_sel in (
@@ -2357,6 +2422,7 @@ async def _fill_flow_prompt_box(pg: Any, prompt_text: str) -> bool:
         if await iloc.count() > 0:
             try:
                 await iloc.click(timeout=4000)
+                await pg.wait_for_timeout(120)
                 await iloc.evaluate(
                     """(el) => {
                         el.focus();
@@ -2370,13 +2436,19 @@ async def _fill_flow_prompt_box(pg: Any, prompt_text: str) -> bool:
                 )
                 await pg.wait_for_timeout(150)
                 await pg.keyboard.insert_text(clean_text)
+                await pg.wait_for_timeout(180)
+                cur_val = ((await iloc.inner_text()) or "").strip()
+                if len(cur_val) < min(8, len(clean_text)):
+                    await iloc.fill(clean_text, timeout=4000)
+                    await pg.wait_for_timeout(150)
                 return True
             except Exception:
                 pass
     return False
 
 
-async def _submit_flow_generation(pg: Any, sess: _FlowBrowserSession) -> None:
+async def _submit_flow_generation(pg: Any, sess: _FlowBrowserSession) -> bool:
+    await _dismiss_overlays(pg)
     await sess.snapshot_existing_media()
     sess.pending_video_urls.clear()
     sess.api_error_messages.clear()
@@ -2390,7 +2462,7 @@ async def _submit_flow_generation(pg: Any, sess: _FlowBrowserSession) -> None:
         'button[aria-label*="Create"]:visible',
         'button:has-text("arrow_forward"):visible',
     )
-    for _ in range(8):
+    for attempt_idx in range(10):
         for gen_sel in gen_candidates:
             gloc = pg.locator(gen_sel).first
             if await gloc.count() > 0 and await gloc.is_enabled():
@@ -2399,10 +2471,21 @@ async def _submit_flow_generation(pg: Any, sess: _FlowBrowserSession) -> None:
                 break
         if clicked_gen:
             break
+        if attempt_idx == 4:
+            # Wake ProseMirror input listener if button is still disabled
+            pm = pg.locator(".ProseMirror:visible").first
+            if await pm.count() > 0:
+                try:
+                    await pm.click(timeout=2000)
+                    await pg.keyboard.press("End")
+                    await pg.keyboard.type(" ")
+                except Exception:
+                    pass
         await pg.wait_for_timeout(450)
 
     if not clicked_gen:
         await pg.keyboard.press("Enter")
+    return clicked_gen
 
 
 async def _capture_new_video_from_page(
@@ -2668,11 +2751,20 @@ async def _open_flow_project_session(
                                     if cand_u not in sess.consumed_video_urls and cand_u not in sess.pending_video_urls:
                                         sess.pending_video_urls.append(cand_u)
                             elif sess.generation_submitted and (
-                                "MEDIA_GENERATION_STATUS_FAILED" in txt or "INSUFFICIENT_CREDITS" in txt
+                                "MEDIA_GENERATION_STATUS_FAILED" in txt
+                                or "INSUFFICIENT_CREDITS" in txt
+                                or "PUBLIC_ERROR_" in txt
                             ):
-                                sess.api_error_messages.append(
-                                    "Google Flow báo không thể tạo video (hết AI Credits hoặc nội dung bị chặn)."
-                                )
+                                if "INSUFFICIENT_CREDITS" in txt:
+                                    sess.api_error_messages.append("Tài khoản Google Flow đã hết AI Credits.")
+                                elif "PUBLIC_ERROR_" in txt:
+                                    sess.api_error_messages.append(
+                                        "PUBLIC_ERROR_UNSAFE: Câu lệnh vướng bộ lọc an toàn của Google Flow."
+                                    )
+                                else:
+                                    sess.api_error_messages.append(
+                                        "Google Flow báo không thể tạo nội dung (hết AI Credits hoặc nội dung bị chặn)."
+                                    )
                     except Exception:
                         pass
 
@@ -2870,24 +2962,22 @@ async def _generate_via_flow_creative_agent(
             finally:
                 await _dismiss_overlays(page)
 
-        if ref_frame_path and Path(ref_frame_path).is_file():
-            await _attach_ingredients_on_flow_page(page, [ref_frame_path])
-
+        # Strict Zero-Source-Frame-Upload Rule: NEVER upload source video screenshots to Flow Creative Agent!
         target_n = max(1, len(scene_plan))
         prefix = (
-            f"Use ONLY the exact product shown in the attached image. "
-            f"Generate {target_n} separate 9:16 portrait video clips (one per scene, NO text overlays/watermarks): "
+            f"Create a fresh 100% original viral remake (NO text overlays, NO subtitles, NO logos). "
+            f"Generate {target_n} separate 9:16 portrait video clips keeping the same product & presenter across clips: "
         )
         avail = max(80, 620 - len(prefix))
         sep_total = 3 * max(0, target_n - 1)
-        per_clip_max = min(140, max(45, (avail - sep_total) // target_n))
+        per_clip_max = min(145, max(45, (avail - sep_total) // target_n))
         scene_specs: List[str] = []
         for idx_s, sc in enumerate(scene_plan, start=1):
             sdur = round(float(sc.get("target_duration") or 4.5), 1)
-            s_act = re.sub(r"\s+", " ", str(sc.get("flow_prompt_en") or sc.get("action_vi") or fallback_prompt)).strip()
+            s_act = re.sub(r"\s+", " ", str(sc.get("frames_prompt_en") or sc.get("flow_prompt_en") or sc.get("action_vi") or fallback_prompt)).strip()
             head = f"Clip {idx_s} ({sdur}s): "
-            body_limit = max(20, min(135, per_clip_max - len(head)))
-            scene_specs.append(f"{head}{s_act[:body_limit]}"[:140])
+            body_limit = max(20, min(140, per_clip_max - len(head)))
+            scene_specs.append(f"{head}{s_act[:body_limit]}"[:145])
 
         director_prompt = (prefix + " | ".join(scene_specs))[:620]
 
@@ -3009,70 +3099,584 @@ async def _generate_via_flow_creative_agent(
         return ok_stitch, err_stitch, "flow_agent"
 
 
-async def _generate_frames_start_end_via_flow_browser_session(
+async def _configure_flow_image_studio_settings(pg: Any) -> None:
+    """Configure Direct Studio settings for AI Keyframe generation: Hình ảnh (Nano Banana 2.1) -> 9:16 -> x1."""
+    stb = pg.locator("button.settings-trigger-button:visible").first
+    if await stb.count() == 0:
+        return
+    try:
+        await stb.click(timeout=4000)
+        await pg.wait_for_timeout(500)
+        for sel_img in (
+            '.cdk-overlay-container button:has-text("Hình ảnh")',
+            '.cdk-overlay-container button:has-text("Image")',
+        ):
+            iloc = pg.locator(sel_img).first
+            if await iloc.count() > 0:
+                await iloc.click(timeout=3000)
+                await pg.wait_for_timeout(400)
+                break
+        for opt_lbl in ("9:16", "x1"):
+            oloc = pg.locator(f'.cdk-overlay-container button:has-text("{opt_lbl}")').first
+            if await oloc.count() > 0:
+                try:
+                    await oloc.click(timeout=2500)
+                    await pg.wait_for_timeout(250)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    finally:
+        await pg.keyboard.press("Escape")
+        await pg.wait_for_timeout(250)
+        await _dismiss_overlays(pg)
+
+
+async def _clear_flow_composer_chips_and_text(pg: Any) -> None:
+    """Clear text and remove any attached Ingredient / Start-End Frame chips inside flow-base-prompt-box."""
+    await _dismiss_overlays(pg)
+    clear_btn = pg.locator("flow-base-prompt-box button.clear-button:visible").first
+    if await clear_btn.count() > 0:
+        try:
+            await clear_btn.click(timeout=2500)
+            await pg.wait_for_timeout(250)
+        except Exception:
+            pass
+    for _ in range(6):
+        chip_btn = pg.locator("flow-base-prompt-box button.chip-container:visible").first
+        if await chip_btn.count() == 0:
+            break
+        try:
+            await chip_btn.click(timeout=2000)
+            await pg.wait_for_timeout(220)
+        except Exception:
+            break
+
+
+def _compute_visual_vec_8x8(raw_bytes: bytes) -> List[int]:
+    """Compute a 192-int 8x8 RGB perceptual vector to match in-project Flow assets 100% accurately across URL/title rotations."""
+    if not raw_bytes or len(raw_bytes) < 256:
+        return []
+    try:
+        import io
+        from PIL import Image
+
+        with Image.open(io.BytesIO(raw_bytes)) as im:
+            small = im.convert("RGB").resize((8, 8))
+            return list(small.tobytes())
+    except Exception:
+        return []
+
+
+async def _select_in_project_flow_asset(
+    pg: Any,
+    trigger_loc: Any,
+    asset_ref: Dict[str, Any],
+) -> bool:
+    """Select an AI-generated asset already inside the current Flow project's Asset Library (ZERO external uploads)."""
+    if not asset_ref or await trigger_loc.count() == 0:
+        return False
+    await _dismiss_overlays(pg)
+    pre_chips = await pg.locator("flow-base-prompt-box img.chip-image").count()
+    try:
+        await trigger_loc.click(timeout=3500)
+        await pg.wait_for_timeout(680)
+        probe_res: Dict[str, Any] = await pg.evaluate(
+            """(ref) => {
+                const items = Array.from(document.querySelectorAll('.cdk-overlay-container button.asset-item'));
+                if (!items.length) return { matched: -1, srcs: [] };
+                const srcs = items.map(b => {
+                    const im = b.querySelector('img');
+                    return im ? (im.currentSrc || im.src || '') : '';
+                });
+                const wantUuid = (ref.image_uuid || '').trim();
+                const wantAsb = (ref.asb_token || '').trim();
+                const wantTileAsb = (ref.tile_asb_token || '').trim();
+                const wantTitle = (ref.title_line || '').trim();
+                for (let i = 0; i < srcs.length; i++) {
+                    if (wantUuid && srcs[i].includes(wantUuid)) return { matched: i, srcs };
+                    if (wantAsb && srcs[i].includes(wantAsb)) return { matched: i, srcs };
+                    if (wantTileAsb && srcs[i].includes(wantTileAsb)) return { matched: i, srcs };
+                }
+                if (wantTitle && wantTitle.toLowerCase() !== 'hình ảnh' && wantTitle.toLowerCase() !== 'image') {
+                    for (let i = 0; i < items.length; i++) {
+                        const firstLn = ((items[i].innerText || '').split('\\n')[0] || '').trim();
+                        if (firstLn && firstLn === wantTitle) return { matched: i, srcs };
+                    }
+                }
+                return { matched: -2, srcs };
+            }""",
+            asset_ref,
+        )
+        matched_idx = int(probe_res.get("matched", -1))
+        cand_srcs: List[str] = list(probe_res.get("srcs") or [])
+        if matched_idx == -1 or not cand_srcs:
+            return False
+
+        # Exact 8x8 RGB visual fingerprint match whenever URL rotated (/image/<UUID> -> /asb/<TOK>) or title wasn't ready yet!
+        want_vec = asset_ref.get("visual_vec")
+        if matched_idx == -2 and isinstance(want_vec, list) and len(want_vec) == 192:
+            best_i = 0
+            best_dist = 1e9
+            for idx_c, c_src in enumerate(cand_srcs):
+                if not c_src.startswith("http"):
+                    continue
+                try:
+                    r_th = await pg.context.request.get(c_src, timeout=8000)
+                    if r_th.ok:
+                        c_vec = _compute_visual_vec_8x8(await r_th.body())
+                        if len(c_vec) == 192:
+                            dist = sum(abs(a - b) for a, b in zip(want_vec, c_vec)) / 192.0
+                            if dist < best_dist:
+                                best_dist = dist
+                                best_i = idx_c
+                except Exception:
+                    pass
+            matched_idx = best_i
+        elif matched_idx < 0:
+            matched_idx = 0
+
+        item_loc = pg.locator(".cdk-overlay-container button.asset-item").nth(matched_idx)
+        if await item_loc.count() == 0:
+            return False
+        was_active = "asset-item-active" in ((await item_loc.get_attribute("class")) or "")
+        await item_loc.click(timeout=3000)
+        await pg.wait_for_timeout(480)
+
+        now_chips = await pg.locator("flow-base-prompt-box img.chip-image").count()
+        if now_chips <= pre_chips:
+            confirm_btn = pg.locator(
+                '.cdk-overlay-container button.detail-add-to-prompt-btn:visible, '
+                'button.detail-add-to-prompt-btn:visible, '
+                '.cdk-overlay-container button:has-text("Thêm vào câu lệnh"):visible, '
+                '.cdk-overlay-container button:has-text("Add to prompt"):visible'
+            ).first
+            if await confirm_btn.count() > 0 and await confirm_btn.is_enabled():
+                try:
+                    await confirm_btn.click(timeout=3000)
+                    await pg.wait_for_timeout(520)
+                except Exception:
+                    pass
+
+            now_chips = await pg.locator("flow-base-prompt-box img.chip-image").count()
+            if (
+                now_chips <= pre_chips
+                and not was_active
+                and await pg.locator(".cdk-overlay-container button.asset-item:visible").count() > matched_idx
+            ):
+                try:
+                    await pg.locator(".cdk-overlay-container button.asset-item").nth(matched_idx).click(timeout=3000)
+                    await pg.wait_for_timeout(520)
+                except Exception:
+                    pass
+
+        return (await pg.locator("flow-base-prompt-box img.chip-image").count()) > pre_chips
+    except Exception:
+        return False
+    finally:
+        await _dismiss_overlays(pg)
+
+
+def _sanitize_image_prompt_for_retry(raw_prompt: str, level: int = 1) -> str:
+    """Rewrite prompt if Nano Banana returns PUBLIC_ERROR_UNSAFE_GENERATION: strip all human/person/gender nouns and focus on POV hands/product action."""
+    cleaned = re.sub(
+        r"\b(female|male|woman|women|man|men|girl|girls|boy|boys|lady|guy|child|children|kid|kids|teen|face|faces|head|smiling|portrait|person|people|runner|runners|jogger|joggers|cyclist|cyclists|athlete|athletes|presenter|creator|model|celebrity|she|her|hers|he|his|him)\b",
+        "athletic gear",
+        raw_prompt,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
+    if level >= 2:
+        return (
+            "Vertical 9:16 commercial product-in-action photograph from a dynamic close-to-medium low angle "
+            f"(strictly zero people or faces in frame, focusing on the glowing product and environment): {cleaned[:260]}. "
+            "Photorealistic lighting, NO text overlays, NO watermarks, NO logos."
+        )
+    return (
+        "Vertical 9:16 dynamic POV product-in-action smartphone photograph (cropped close to hands or footwear/mount only, "
+        f"zero human faces visible): {cleaned[:280]}. Crisp natural lighting, photorealistic, NO text overlays, NO watermarks, NO brand logos."
+    )
+
+
+async def _generate_single_nano_banana_image(
+    pg: Any,
+    sess: _FlowBrowserSession,
+    prompt_en: str,
+    ingredient_assets: List[Dict[str, Any]],
+    save_jpg_path: Path,
+    ffmpeg_bin: Optional[str] = None,
+) -> Tuple[bool, str, Dict[str, Any]]:
+    """Generate 1 9:16 AI keyframe natively inside Google Flow via Nano Banana 2.1, catching PUBLIC_ERROR_UNSAFE_GENERATION in ~2.5s and auto-retrying cleanly."""
+    for attempt in range(3):
+        eff_prompt = prompt_en if attempt == 0 else _sanitize_image_prompt_for_retry(prompt_en, level=attempt)
+        eff_ings = ingredient_assets[:2] if attempt < 2 else []
+        await _close_preview_modals(pg)
+        await _clear_flow_composer_chips_and_text(pg)
+
+        for ing_ref in eff_ings:
+            add_trig = pg.locator("button.add-menu-trigger:visible").first
+            if await add_trig.count() == 0:
+                break
+            await _select_in_project_flow_asset(pg, add_trig, ing_ref)
+            await pg.wait_for_timeout(250)
+
+        pre_state: Dict[str, List[str]] = await pg.evaluate(
+            """() => {
+                const srcs = [];
+                const toks = [];
+                for (const im of document.querySelectorAll('flow-image-tile img')) {
+                    const s = im.currentSrc || im.src || '';
+                    if (!s) continue;
+                    srcs.push(s);
+                    const m = s.match(/\\/asb\\/([A-Za-z0-9_-]{20,})/);
+                    if (m) toks.push(m[1]);
+                }
+                return { srcs, toks };
+            }"""
+        )
+
+        if not await _fill_flow_prompt_box(pg, eff_prompt):
+            return False, f"Không tìm thấy ô nhập Prompt tạo ảnh Nano Banana ({pg.url}).", {}
+
+        await pg.wait_for_timeout(450)
+        submitted_ok = await _submit_flow_generation(pg, sess)
+        if not submitted_ok:
+            sess.generation_submitted = False
+            if attempt == 0:
+                await _configure_flow_image_studio_settings(pg)
+                continue
+            return False, "Nút tạo ảnh Nano Banana không kích hoạt được trên Google Flow.", {}
+
+        new_tile_src = ""
+        new_tile_tok = ""
+        last_err = ""
+        deadline = time.monotonic() + 105.0
+        while time.monotonic() < deadline:
+            await pg.wait_for_timeout(2500)
+            err_chk = await sess.check_errors()
+            if err_chk:
+                last_err = err_chk
+                break
+            found_tile: Dict[str, str] = await pg.evaluate(
+                """(pre) => {
+                    const vp = document.querySelector('cdk-virtual-scroll-viewport');
+                    if (vp && vp.scrollTop > 0) vp.scrollTop = 0;
+                    const knownSrcs = new Set(pre.srcs || []);
+                    const knownToks = new Set(pre.toks || []);
+                    const tiles = Array.from(document.querySelectorAll('flow-image-tile'));
+                    for (const t of tiles) {
+                        const spin = Boolean(t.querySelector('mat-progress-spinner, mat-spinner, [role="progressbar"]'));
+                        const tTxt = (t.innerText || '');
+                        if (spin || /\\b(?:[0-9]|[1-9][0-9])%/.test(tTxt)) continue;
+                        const im = t.querySelector('img');
+                        const src = im ? (im.currentSrc || im.src || '') : '';
+                        if (!src || knownSrcs.has(src)) continue;
+                        const m = src.match(/\\/asb\\/([A-Za-z0-9_-]{20,})/);
+                        if (m && knownToks.has(m[1])) continue;
+                        if (src.includes('/asb/') || src.includes('flow-content.google/image/') || src.includes('googleusercontent')) {
+                            return { src, tok: m ? m[1] : '' };
+                        }
+                    }
+                    return { src: '', tok: '' };
+                }""",
+                pre_state,
+            )
+            if found_tile.get("src"):
+                new_tile_src = str(found_tile["src"])
+                new_tile_tok = str(found_tile.get("tok") or "")
+                break
+
+        sess.generation_submitted = False
+        sess.api_error_messages.clear()
+
+        if not new_tile_src:
+            if attempt < 2:
+                await _configure_flow_image_studio_settings(pg)
+                continue
+            return False, last_err or "Quá thời gian chờ tạo ảnh AI First/End Frame bằng Nano Banana trên Google Flow.", {}
+
+        # Download AI-generated image locally so Frontend UI shows the exact AI Start/End frames!
+        save_jpg_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            resp_img = await sess.ctx.request.get(new_tile_src, timeout=30000)
+            if resp_img.ok:
+                img_bytes = await resp_img.body()
+                if len(img_bytes) > 4000:
+                    tmp_raw = save_jpg_path.parent / f"_raw_{save_jpg_path.name}"
+                    tmp_raw.write_bytes(img_bytes)
+                    if ffmpeg_bin:
+                        proc_n = await asyncio.to_thread(
+                            subprocess.run,
+                            [
+                                ffmpeg_bin,
+                                "-y",
+                                "-i",
+                                str(tmp_raw),
+                                "-frames:v",
+                                "1",
+                                "-vf",
+                                "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280",
+                                "-q:v",
+                                "2",
+                                str(save_jpg_path),
+                            ],
+                            capture_output=True,
+                            text=True,
+                            timeout=15,
+                            env=crawler_service.build_tool_env(),
+                        )
+                        if proc_n.returncode != 0 or not save_jpg_path.is_file():
+                            save_jpg_path.write_bytes(img_bytes)
+                        tmp_raw.unlink(missing_ok=True)
+                    else:
+                        save_jpg_path.write_bytes(img_bytes)
+                        tmp_raw.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+        # Newest generated asset in Flow's Asset Picker is ALWAYS at index 0 (`items[0]`) + store 8x8 RGB visual fingerprint!
+        vis_vec = _compute_visual_vec_8x8(save_jpg_path.read_bytes()) if save_jpg_path.is_file() else []
+        asset_meta: Dict[str, Any] = {
+            "asset_idx": 0,
+            "title_line": "",
+            "image_uuid": "",
+            "asb_token": new_tile_tok,
+            "tile_asb_token": new_tile_tok,
+            "visual_vec": vis_vec,
+        }
+        add_trig_probe = pg.locator("button.add-menu-trigger:visible").first
+        if await add_trig_probe.count() > 0:
+            try:
+                await add_trig_probe.click(timeout=3000)
+                await pg.wait_for_timeout(620)
+                probed: Dict[str, Any] = await pg.evaluate(
+                    """() => {
+                        const items = Array.from(document.querySelectorAll('.cdk-overlay-container button.asset-item'));
+                        if (!items.length) return { src: '', title: '' };
+                        const im = items[0].querySelector('img');
+                        const src = im ? (im.currentSrc || im.src || '') : '';
+                        const title = ((items[0].innerText || '').split('\\n')[0] || '').trim();
+                        return { src, title };
+                    }"""
+                )
+                p_src = str(probed.get("src") or "")
+                p_title = str(probed.get("title") or "")
+                if p_title:
+                    asset_meta["title_line"] = p_title
+                m_uuid = re.search(r"image/([0-9a-fA-F-]{16,})", p_src)
+                if m_uuid:
+                    asset_meta["image_uuid"] = m_uuid.group(1)
+                m_asb = re.search(r"/asb/([A-Za-z0-9_-]{20,})", p_src)
+                if m_asb:
+                    asset_meta["asb_token"] = m_asb.group(1)
+            except Exception:
+                pass
+            finally:
+                await _dismiss_overlays(pg)
+
+        return True, "", asset_meta
+
+    return False, "Không thể tạo ảnh AI First/End Frame trên Google Flow.", {}
+
+
+def _generate_ai_image_via_gateway(prompt_en: str, dest_jpg: Path) -> str:
+    """Generate a synthetic 9:16 AI keyframe via `gemini-3.1-flash-image` for API-key accounts (ZERO source frames uploaded)."""
+    settings = database.get_settings()
+    base_u = (settings.get("rea_vlm_base_url") or "").strip().rstrip("/")
+    api_k = (settings.get("rea_vlm_api_key") or "").strip()
+    if not base_u or not api_k:
+        return ""
+    try:
+        resp = httpx.post(
+            f"{base_u}/chat/completions",
+            headers={"Authorization": f"Bearer {api_k}", "Content-Type": "application/json"},
+            json={
+                "model": "gemini-3.1-flash-image",
+                "messages": [{"role": "user", "content": f"Generate a vertical 9:16 portrait image: {prompt_en}"}],
+            },
+            timeout=55.0,
+        )
+        if resp.status_code != 200:
+            return ""
+        content = str((((resp.json().get("choices") or [{}])[0]).get("message") or {}).get("content") or "")
+        m_b64 = re.search(r"data:image/[a-zA-Z0-9.+-]+;base64,([A-Za-z0-9+/=\s]+)", content)
+        if not m_b64:
+            return ""
+        raw_bytes = base64.b64decode(re.sub(r"\s+", "", m_b64.group(1)))
+        if len(raw_bytes) <= 4000:
+            return ""
+        dest_jpg.parent.mkdir(parents=True, exist_ok=True)
+        dest_jpg.write_bytes(raw_bytes)
+        return str(dest_jpg)
+    except Exception:
+        return ""
+
+
+async def _generate_ai_remake_frames_start_end_via_flow(
     job_id: int,
     raw_acc: Dict[str, Any],
     scene_plan: List[Dict[str, Any]],
     flow_model: str,
-    ref_frame_path: str,
     ffmpeg_bin: Optional[str],
     dest_mp4: Path,
     on_progress: Optional[Callable[[int], None]] = None,
     on_scene_plan_update: Optional[Callable[[List[Dict[str, Any]]], None]] = None,
+    on_engine_note: Optional[Callable[[str], None]] = None,
 ) -> Tuple[bool, str, str]:
-    """Generate each Scene Unit using Direct Video Studio 'Khung hình: Bắt đầu → Kết thúc' (Start Frame -> End Frame)."""
+    """2-Phase Viral Remake inside ONE Google Flow project:
+    Phase 1: Generate 100% brand-new 9:16 AI First Frame & AI End Frame images with Nano Banana 2.1 (chained via Product Anchor & Start-Frame ingredients; ZERO source video screenshots uploaded -> ZERO policy violations!).
+    Phase 2: Bridge each scene's AI First Frame (Bắt đầu) -> AI End Frame (Kết thúc) via Omni 1.2 Flash / Veo 3.1, time-scale smoothly to exact rea-video beat durations, and stitch into dest_mp4.
+    """
     async with _open_flow_project_session(raw_acc, on_progress=on_progress) as sess:
         if sess.error or sess.page is None:
-            return False, sess.error or "Không mở được phiên First–End Frame trên Google Flow.", "flow_frames_start_end"
+            return False, sess.error or "Không mở được phiên AI Remake First–End Frame trên Google Flow.", "flow_ai_frames_remake"
 
         page = sess.page
-        await _turn_agent_mode(page, want_on=False)
-        await _configure_flow_video_studio_settings(page, flow_model, sub_mode="frames")
-
+        acc_disp = str(raw_acc.get("email") or raw_acc.get("label") or f"Acc #{raw_acc['id']}")
         total_scenes = max(1, len(scene_plan))
+
+        await _turn_agent_mode(page, want_on=False)
+
+        # =====================================================================
+        # PHASE 1: Generate 100% AI First Frame & AI End Frame via Nano Banana 2.1
+        # =====================================================================
+        await _configure_flow_image_studio_settings(page)
+
+        anchor_asset: Optional[Dict[str, Any]] = None
+        anchor_prompt = str((scene_plan[0] if scene_plan else {}).get("ai_product_anchor_prompt_en") or "").strip()
+        if total_scenes >= 2 and anchor_prompt:
+            if on_engine_note:
+                on_engine_note(f"🎨 Nano Banana tạo Ảnh Gốc SP Remake · {acc_disp}")
+            if on_progress:
+                on_progress(35)
+            anchor_jpg = FLOW_REFS_DIR / f"job_{job_id}_ai_anchor.jpg"
+            ok_anc, _err_anc, anc_meta = await _generate_single_nano_banana_image(
+                pg=page,
+                sess=sess,
+                prompt_en=anchor_prompt,
+                ingredient_assets=[],
+                save_jpg_path=anchor_jpg,
+                ffmpeg_bin=ffmpeg_bin,
+            )
+            if ok_anc and anc_meta:
+                anchor_asset = anc_meta
+
+        scene_frame_assets: Dict[int, Dict[str, Dict[str, Any]]] = {}
+        prev_end_asset: Optional[Dict[str, Any]] = None
+        prev_end_jpg: Optional[Path] = None
+
+        for s_idx, scene_item in enumerate(scene_plan, start=1):
+            img_pct_start = 36 + int(((s_idx - 1) / total_scenes) * 22)
+            img_pct_end = 36 + int((s_idx / total_scenes) * 22)
+            if on_progress:
+                on_progress(img_pct_start)
+            if on_engine_note:
+                on_engine_note(f"🎨 AI tạo Ảnh Đầu→Cuối ({s_idx}/{total_scenes}) · {acc_disp}")
+
+            scene_item["status"] = "generating"
+            if on_scene_plan_update:
+                on_scene_plan_update(scene_plan)
+
+            start_jpg = FLOW_REFS_DIR / f"job_{job_id}_u{s_idx}_ai_start.jpg"
+            end_jpg = FLOW_REFS_DIR / f"job_{job_id}_u{s_idx}_ai_end.jpg"
+
+            # 1A. AI First Frame (Bắt đầu): reuse previous End Frame when continuous cut at identical camera angle
+            if s_idx > 1 and scene_item.get("reuse_prev_end_as_start") and prev_end_asset is not None:
+                u_start_asset = dict(prev_end_asset)
+                if prev_end_jpg and prev_end_jpg.is_file():
+                    start_jpg.write_bytes(prev_end_jpg.read_bytes())
+            else:
+                start_ings: List[Dict[str, Any]] = [anchor_asset] if anchor_asset is not None else []
+                ai_start_prompt = str(
+                    scene_item.get("ai_start_image_prompt_en")
+                    or scene_item.get("frames_prompt_en")
+                    or scene_item.get("flow_prompt_en")
+                    or ""
+                ).strip()
+                ok_st, err_st, u_start_asset = await _generate_single_nano_banana_image(
+                    pg=page,
+                    sess=sess,
+                    prompt_en=ai_start_prompt,
+                    ingredient_assets=start_ings,
+                    save_jpg_path=start_jpg,
+                    ffmpeg_bin=ffmpeg_bin,
+                )
+                if not ok_st or not u_start_asset:
+                    scene_item["status"] = "failed"
+                    if on_scene_plan_update:
+                        on_scene_plan_update(scene_plan)
+                    return False, f"Lỗi tạo Ảnh Đầu AI ở Cảnh {s_idx}/{total_scenes}: {err_st}", "flow_ai_frames_remake"
+
+            if start_jpg.is_file():
+                scene_item["start_frame_path"] = str(start_jpg)
+                scene_item["start_frame_url"] = f"/media/flow_refs/{start_jpg.name}?v={int(time.time())}"
+                if on_scene_plan_update:
+                    on_scene_plan_update(scene_plan)
+
+            # 1B. AI End Frame (Kết thúc): condition on u_start_asset (1 clean chip) so room, hands, lighting & product stay 100% locked!
+            end_ings: List[Dict[str, Any]] = [u_start_asset]
+            ai_end_prompt = str(
+                scene_item.get("ai_end_image_prompt_en")
+                or scene_item.get("frames_prompt_en")
+                or scene_item.get("flow_prompt_en")
+                or ""
+            ).strip()
+            ok_en, err_en, u_end_asset = await _generate_single_nano_banana_image(
+                pg=page,
+                sess=sess,
+                prompt_en=ai_end_prompt,
+                ingredient_assets=end_ings,
+                save_jpg_path=end_jpg,
+                ffmpeg_bin=ffmpeg_bin,
+            )
+            if not ok_en or not u_end_asset:
+                scene_item["status"] = "failed"
+                if on_scene_plan_update:
+                    on_scene_plan_update(scene_plan)
+                return False, f"Lỗi tạo Ảnh Cuối AI ở Cảnh {s_idx}/{total_scenes}: {err_en}", "flow_ai_frames_remake"
+
+            if end_jpg.is_file():
+                scene_item["end_frame_path"] = str(end_jpg)
+                scene_item["end_frame_url"] = f"/media/flow_refs/{end_jpg.name}?v={int(time.time())}"
+            if anchor_asset is None:
+                anchor_asset = u_end_asset
+            prev_end_asset = u_end_asset
+            prev_end_jpg = end_jpg if end_jpg.is_file() else None
+            scene_frame_assets[s_idx] = {"start": u_start_asset, "end": u_end_asset}
+
+            if on_scene_plan_update:
+                on_scene_plan_update(scene_plan)
+            if on_progress:
+                on_progress(img_pct_end)
+
+        # =====================================================================
+        # PHASE 2: Render Video Clips via 'Khung hình: Bắt đầu → Kết thúc'
+        # =====================================================================
+        await _configure_flow_video_studio_settings(page, flow_model, sub_mode="frames")
         trimmed_scene_files: List[Path] = []
 
         for s_idx, scene_item in enumerate(scene_plan, start=1):
-            base_pct = 36 + int(((s_idx - 1) / total_scenes) * 48)
-            end_pct = 36 + int((s_idx / total_scenes) * 48)
+            vid_base_pct = 58 + int(((s_idx - 1) / total_scenes) * 27)
+            vid_end_pct = 58 + int((s_idx / total_scenes) * 27)
             if on_progress:
-                on_progress(base_pct)
+                on_progress(vid_base_pct)
+            if on_engine_note:
+                on_engine_note(f"🎬 Render Video Đầu→Cuối ({s_idx}/{total_scenes}) · {acc_disp}")
 
             scene_item["status"] = "generating"
             if on_scene_plan_update:
                 on_scene_plan_update(scene_plan)
 
             await _close_preview_modals(page)
+            await _clear_flow_composer_chips_and_text(page)
 
-            # Clear prompt box & reset both Start / End frame slots
-            clear_btn = page.locator("flow-base-prompt-box button.clear-button:visible").first
-            if await clear_btn.count() > 0:
-                try:
-                    await clear_btn.click(timeout=2500)
-                    await page.wait_for_timeout(300)
-                except Exception:
-                    pass
-
-            for _ in range(4):
-                chip_cancel = page.locator("flow-base-prompt-box .frame-trigger button.chip-container:visible").first
-                if await chip_cancel.count() == 0:
-                    break
-                try:
-                    await chip_cancel.click(timeout=2000)
-                    await page.wait_for_timeout(250)
-                except Exception:
-                    break
-
-            start_p = str(scene_item.get("start_frame_path") or ref_frame_path or "").strip()
-            end_p = str(scene_item.get("end_frame_path") or start_p or "").strip()
-
-            for slot_idx, img_p in ((0, start_p), (1, end_p)):
-                if not img_p or not Path(img_p).is_file():
-                    continue
+            pair_refs = scene_frame_assets.get(s_idx) or {}
+            for slot_idx, ref_key in ((0, "start"), (1, "end")):
+                target_ref = pair_refs.get(ref_key) or {}
                 mounted = False
                 for _attempt in range(2):
                     slot_loc = page.locator("flow-base-prompt-box .frame-trigger").nth(slot_idx)
-                    await _pick_or_upload_flow_asset(pg=page, trigger_loc=slot_loc, img_path=img_p, require_inactive_click=False)
+                    await _select_in_project_flow_asset(page, slot_loc, target_ref)
                     await page.wait_for_timeout(450)
                     if await page.locator("flow-base-prompt-box .frame-trigger").nth(slot_idx).locator("img.chip-image").count() > 0:
                         mounted = True
@@ -3084,8 +3688,8 @@ async def _generate_frames_start_end_via_flow_browser_session(
                     slot_lbl = "Bắt đầu" if slot_idx == 0 else "Kết thúc"
                     return (
                         False,
-                        f"Không gắn được ảnh khung hình {slot_lbl} ở Cảnh {s_idx}/{total_scenes} trên Google Flow.",
-                        "flow_frames_start_end",
+                        f"Không gắn được Ảnh AI {slot_lbl} ở Cảnh {s_idx}/{total_scenes} trên Google Flow.",
+                        "flow_ai_frames_remake",
                     )
 
             scene_prompt = str(scene_item.get("frames_prompt_en") or scene_item.get("flow_prompt_en") or "").strip()
@@ -3095,33 +3699,49 @@ async def _generate_frames_start_end_via_flow_browser_session(
                     on_scene_plan_update(scene_plan)
                 return (
                     False,
-                    f"Không tìm thấy ô nhập Prompt ở Cảnh {s_idx}/{total_scenes} trên Google Flow ({page.url}).",
-                    "flow_frames_start_end",
+                    f"Không tìm thấy ô nhập Prompt Video ở Cảnh {s_idx}/{total_scenes} trên Google Flow ({page.url}).",
+                    "flow_ai_frames_remake",
                 )
 
-            await page.wait_for_timeout(850)
-            submit_ts = time.monotonic()
-            await _submit_flow_generation(page, sess)
-
             raw_scene_mp4 = OUTPUTS_DIR / f"flow_scene_{job_id}_{s_idx}_raw.mp4"
-            saved_ok, err_wait = await _wait_and_capture_single_scene_clip(
-                sess=sess,
-                raw_scene_mp4=raw_scene_mp4,
-                s_idx=s_idx,
-                total_scenes=total_scenes,
-                base_pct=base_pct,
-                end_pct=end_pct,
-                submit_ts=submit_ts,
-                on_progress=on_progress,
-            )
-            sess.generation_submitted = False
-            await _close_preview_modals(page)
+            saved_ok = False
+            err_wait = ""
+            for vid_attempt in range(2):
+                if vid_attempt > 0:
+                    safe_vid_prompt = (
+                        "Smooth continuous smartphone camera tracking bridging the opening frame seamlessly to the closing frame "
+                        "with natural movement and crisp ambient foley sound. Vertical 9:16 smartphone footage, photorealistic, NO text overlays."
+                    )
+                    await _fill_flow_prompt_box(page, safe_vid_prompt)
+                    await page.wait_for_timeout(500)
+                else:
+                    await page.wait_for_timeout(750)
+                submit_ts = time.monotonic()
+                await _submit_flow_generation(page, sess)
+
+                saved_ok, err_wait = await _wait_and_capture_single_scene_clip(
+                    sess=sess,
+                    raw_scene_mp4=raw_scene_mp4,
+                    s_idx=s_idx,
+                    total_scenes=total_scenes,
+                    base_pct=vid_base_pct,
+                    end_pct=vid_end_pct,
+                    submit_ts=submit_ts,
+                    on_progress=on_progress,
+                )
+                sess.generation_submitted = False
+                sess.api_error_messages.clear()
+                await _close_preview_modals(page)
+                if saved_ok and raw_scene_mp4.is_file():
+                    break
+                if "PUBLIC_ERROR" not in err_wait and "bị chặn" not in err_wait:
+                    break
 
             if not saved_ok or not raw_scene_mp4.is_file():
                 scene_item["status"] = "failed"
                 if on_scene_plan_update:
                     on_scene_plan_update(scene_plan)
-                return False, err_wait, "flow_frames_start_end"
+                return False, err_wait, "flow_ai_frames_remake"
 
             tdur = float(scene_item.get("target_duration") or 5.0)
             trimmed_mp4 = OUTPUTS_DIR / f"flow_scene_{job_id}_{s_idx}.mp4"
@@ -3131,19 +3751,21 @@ async def _generate_frames_start_end_via_flow_browser_session(
             trimmed_scene_files.append(trimmed_mp4)
 
             scene_item["status"] = "done"
-            scene_item["engine_used"] = "flow_frames_start_end"
+            scene_item["engine_used"] = "flow_ai_frames_remake"
             scene_item["clip_url"] = f"/media/outputs/{trimmed_mp4.name}?v={int(time.time())}"
             if on_scene_plan_update:
                 on_scene_plan_update(scene_plan)
             if on_progress:
-                on_progress(end_pct)
+                on_progress(vid_end_pct)
 
         if on_progress:
             on_progress(86)
+        if on_engine_note:
+            on_engine_note(f"🎨 AI Remake Đầu→Cuối ({total_scenes}/{total_scenes} cảnh) · {acc_disp}")
         ok_stitch, err_stitch = await asyncio.to_thread(
             _stitch_scene_clips_ffmpeg, ffmpeg_bin, trimmed_scene_files, dest_mp4
         )
-        return ok_stitch, err_stitch, "flow_frames_start_end"
+        return ok_stitch, err_stitch, "flow_ai_frames_remake"
 
 
 async def _generate_multi_scene_via_flow_browser_session(
@@ -3158,24 +3780,52 @@ async def _generate_multi_scene_via_flow_browser_session(
     on_progress: Optional[Callable[[int], None]] = None,
     on_scene_plan_update: Optional[Callable[[List[Dict[str, Any]]], None]] = None,
 ) -> Tuple[bool, str]:
-    """Execute all rea-video Scene Units inside ONE fresh empty Google Flow project, locking the clean product Ingredient across scenes and stitching into dest_mp4."""
+    """Execute Ingredients / Text-to-Video Scene Units inside ONE fresh Google Flow project using ONLY AI-generated Ingredient assets (ZERO source frames uploaded)."""
     async with _open_flow_project_session(raw_acc, on_progress=on_progress) as sess:
         if sess.error or sess.page is None:
             return False, sess.error or "Không mở được phiên Google Flow."
 
         page = sess.page
         await _turn_agent_mode(page, want_on=False)
+
+        ai_anchor_ref: Optional[Dict[str, Any]] = None
+        if clone_mode in ("flow_omni_ingredients", "flow_veo_i2v") and scene_plan:
+            await _configure_flow_image_studio_settings(page)
+            anc_prompt = str(
+                scene_plan[0].get("ai_product_anchor_prompt_en")
+                or scene_plan[0].get("ai_start_image_prompt_en")
+                or ""
+            ).strip()
+            if anc_prompt:
+                anc_jpg = FLOW_REFS_DIR / f"job_{job_id}_ai_ing_anchor.jpg"
+                ok_a, _err_a, anc_meta = await _generate_single_nano_banana_image(
+                    pg=page,
+                    sess=sess,
+                    prompt_en=anc_prompt,
+                    ingredient_assets=[],
+                    save_jpg_path=anc_jpg,
+                    ffmpeg_bin=ffmpeg_bin,
+                )
+                if ok_a and anc_meta:
+                    ai_anchor_ref = anc_meta
+                    if anc_jpg.is_file():
+                        anc_url = f"/media/flow_refs/{anc_jpg.name}?v={int(time.time())}"
+                        for sc_u in scene_plan:
+                            sc_u["ref_url"] = anc_url
+                            sc_u["start_frame_url"] = anc_url
+                        if on_scene_plan_update:
+                            on_scene_plan_update(scene_plan)
+
         await _configure_flow_video_studio_settings(
             page, flow_model, sub_mode="frames" if clone_mode == "flow_veo_i2v" else "ingredients"
         )
 
         total_scenes = max(1, len(scene_plan))
         trimmed_scene_files: List[Path] = []
-        prev_continuity_jpg = ""
 
         for s_idx, scene_item in enumerate(scene_plan, start=1):
-            base_pct = 36 + int(((s_idx - 1) / total_scenes) * 48)
-            end_pct = 36 + int((s_idx / total_scenes) * 48)
+            base_pct = 42 + int(((s_idx - 1) / total_scenes) * 42)
+            end_pct = 42 + int((s_idx / total_scenes) * 42)
             if on_progress:
                 on_progress(base_pct)
 
@@ -3184,25 +3834,17 @@ async def _generate_multi_scene_via_flow_browser_session(
                 on_scene_plan_update(scene_plan)
 
             await _close_preview_modals(page)
+            await _clear_flow_composer_chips_and_text(page)
 
-            scene_ingredients: List[str] = []
-            if clone_mode in ("flow_omni_ingredients", "flow_veo_i2v") and ref_frame_path and Path(ref_frame_path).is_file():
-                if clone_mode == "flow_veo_i2v" and s_idx > 1 and scene_item.get("same_scene_as_prev") and prev_continuity_jpg:
-                    scene_ingredients.append(prev_continuity_jpg)
+            if ai_anchor_ref is not None and clone_mode in ("flow_omni_ingredients", "flow_veo_i2v"):
+                if clone_mode == "flow_veo_i2v":
+                    slot0 = page.locator("flow-base-prompt-box .frame-trigger").nth(0)
+                    await _select_in_project_flow_asset(page, slot0, ai_anchor_ref)
                 else:
-                    scene_ingredients.append(ref_frame_path)
-                    if (
-                        clone_mode == "flow_omni_ingredients"
-                        and s_idx > 1
-                        and scene_item.get("same_scene_as_prev")
-                        and prev_continuity_jpg
-                    ):
-                        scene_ingredients.append(prev_continuity_jpg)
+                    add_trig = page.locator("button.add-menu-trigger:visible").first
+                    await _select_in_project_flow_asset(page, add_trig, ai_anchor_ref)
 
-            if scene_ingredients:
-                await _attach_ingredients_on_flow_page(page, scene_ingredients)
-
-            scene_prompt = str(scene_item.get("flow_prompt_en") or "").strip()
+            scene_prompt = str(scene_item.get("flow_prompt_en") or scene_item.get("frames_prompt_en") or "").strip()
             if not await _fill_flow_prompt_box(page, scene_prompt):
                 scene_item["status"] = "failed"
                 if on_scene_plan_update:
@@ -3237,13 +3879,8 @@ async def _generate_multi_scene_via_flow_browser_session(
                 return False, err_wait
 
             tdur = float(scene_item.get("target_duration") or 5.0)
-            cont_jpg = FLOW_REFS_DIR / f"job_{job_id}_s{s_idx}_end_ref.jpg"
-            prev_continuity_jpg = await asyncio.to_thread(
-                _extract_clean_continuity_frame, ffmpeg_bin, raw_scene_mp4, cont_jpg, tdur
-            )
-
             trimmed_mp4 = OUTPUTS_DIR / f"flow_scene_{job_id}_{s_idx}.mp4"
-            await asyncio.to_thread(_trim_and_normalize_scene_clip, ffmpeg_bin, raw_scene_mp4, trimmed_mp4, tdur)
+            await asyncio.to_thread(_trim_and_normalize_scene_clip, ffmpeg_bin, raw_scene_mp4, trimmed_mp4, tdur, True)
             trimmed_scene_files.append(trimmed_mp4)
 
             scene_item["status"] = "done"
@@ -3280,7 +3917,10 @@ async def _generate_via_flow_browser_session(
             "end": 8.0,
             "target_duration": 8.0,
             "same_scene_as_prev": False,
+            "reuse_prev_end_as_start": False,
             "action_vi": "",
+            "ai_start_image_prompt_en": prompt,
+            "ai_end_image_prompt_en": prompt,
             "flow_prompt_en": prompt,
             "frames_prompt_en": prompt,
             "status": "pending",
@@ -3292,7 +3932,7 @@ async def _generate_via_flow_browser_session(
         scene_plan=single_plan,
         flow_model=flow_model,
         clone_mode=clone_mode,
-        ref_frame_path=ref_frame_path,
+        ref_frame_path="",
         ffmpeg_bin=None,
         dest_mp4=dest_mp4,
         on_progress=on_progress,
@@ -3314,7 +3954,7 @@ async def generate_multi_scene_video_via_flow(
     on_scene_plan_update: Optional[Callable[[List[Dict[str, Any]]], None]] = None,
     on_engine_note: Optional[Callable[[str], None]] = None,
 ) -> Tuple[bool, str]:
-    """Generate all rea-video Scene Units via Google Flow (Creative Agent, First-End Frames, Studio, or API) and stitch into 1 MP4."""
+    """Generate all rea-video Scene Units via Google Flow using 100% AI-generated First/End Remake Frames (ZERO source video screenshots ever uploaded!)."""
     effective_plan = list(scene_plan) if scene_plan else [
         {
             "unit_index": 1,
@@ -3324,7 +3964,10 @@ async def generate_multi_scene_video_via_flow(
             "end": 8.0,
             "target_duration": 8.0,
             "same_scene_as_prev": False,
+            "reuse_prev_end_as_start": False,
             "action_vi": "",
+            "ai_start_image_prompt_en": fallback_prompt,
+            "ai_end_image_prompt_en": fallback_prompt,
             "flow_prompt_en": fallback_prompt,
             "frames_prompt_en": fallback_prompt,
             "status": "pending",
@@ -3334,6 +3977,7 @@ async def generate_multi_scene_video_via_flow(
     bearer = str(raw_acc.get("bearer_token") or "").strip()
     project_url = str(raw_acc.get("project_url") or FLOW_HOME_URL)
 
+    # Non-browser API-key / Bearer accounts: synthesize clean AI start frames via gemini-3.1-flash-image (never upload source frames!)
     if mode in ("gemini_api_key", "bearer_token") or bearer.startswith("AIza") or bearer.startswith("ya29."):
         trimmed_files: List[Path] = []
         total_s = max(1, len(effective_plan))
@@ -3343,19 +3987,26 @@ async def generate_multi_scene_video_via_flow(
             if on_scene_plan_update:
                 on_scene_plan_update(effective_plan)
             raw_s = OUTPUTS_DIR / f"flow_scene_{job_id}_{s_idx}_raw.mp4"
-            use_ref = prev_cont if (s_idx > 1 and s_item.get("same_scene_as_prev") and prev_cont) else ref_frame_path
-            s_prompt = (
-                str(s_item.get("frames_prompt_en") or s_item.get("flow_prompt_en") or fallback_prompt)
-                if clone_mode == "flow_frames_start_end"
-                else str(s_item.get("flow_prompt_en") or fallback_prompt)
-            )
+            ai_ref_path = ""
+            if s_idx > 1 and s_item.get("reuse_prev_end_as_start") and prev_cont:
+                ai_ref_path = prev_cont
+            elif clone_mode != "flow_veo_t2v":
+                ai_st_jpg = FLOW_REFS_DIR / f"job_{job_id}_u{s_idx}_ai_start.jpg"
+                ai_st_p = str(s_item.get("ai_start_image_prompt_en") or s_item.get("frames_prompt_en") or fallback_prompt)
+                ai_ref_path = await asyncio.to_thread(_generate_ai_image_via_gateway, ai_st_p, ai_st_jpg)
+                if ai_ref_path:
+                    s_item["start_frame_url"] = f"/media/flow_refs/{ai_st_jpg.name}?v={int(time.time())}"
+                    if on_scene_plan_update:
+                        on_scene_plan_update(effective_plan)
+
+            s_prompt = str(s_item.get("frames_prompt_en") or s_item.get("flow_prompt_en") or fallback_prompt)
             if mode == "gemini_api_key" or bearer.startswith("AIza"):
                 ok_s, err_s = await asyncio.to_thread(
-                    _generate_via_gemini_veo_api, bearer, s_prompt, flow_model, clone_mode, use_ref, raw_s, None
+                    _generate_via_gemini_veo_api, bearer, s_prompt, flow_model, clone_mode, ai_ref_path, raw_s, None
                 )
             else:
                 ok_s, err_s = await asyncio.to_thread(
-                    _generate_via_aisandbox_bearer, bearer, project_url, s_prompt, flow_model, clone_mode, use_ref, raw_s, None
+                    _generate_via_aisandbox_bearer, bearer, project_url, s_prompt, flow_model, clone_mode, ai_ref_path, raw_s, None
                 )
             if not ok_s or not raw_s.is_file():
                 s_item["status"] = "failed"
@@ -3363,12 +4014,15 @@ async def generate_multi_scene_video_via_flow(
                     on_scene_plan_update(effective_plan)
                 return False, f"Lỗi ở Cảnh {s_idx}/{total_s}: {err_s}"
             tdur = float(s_item.get("target_duration") or 6.0)
-            cont_jpg = FLOW_REFS_DIR / f"job_{job_id}_s{s_idx}_end_ref.jpg"
+            cont_jpg = FLOW_REFS_DIR / f"job_{job_id}_u{s_idx}_ai_end.jpg"
             prev_cont = await asyncio.to_thread(_extract_clean_continuity_frame, ffmpeg_bin, raw_s, cont_jpg, tdur)
+            if prev_cont:
+                s_item["end_frame_url"] = f"/media/flow_refs/{cont_jpg.name}?v={int(time.time())}"
             trim_s = OUTPUTS_DIR / f"flow_scene_{job_id}_{s_idx}.mp4"
-            await asyncio.to_thread(_trim_and_normalize_scene_clip, ffmpeg_bin, raw_s, trim_s, tdur)
+            await asyncio.to_thread(_trim_and_normalize_scene_clip, ffmpeg_bin, raw_s, trim_s, tdur, True)
             trimmed_files.append(trim_s)
             s_item["status"] = "done"
+            s_item["engine_used"] = "flow_ai_frames_remake"
             s_item["clip_url"] = f"/media/outputs/{trim_s.name}?v={int(time.time())}"
             if on_scene_plan_update:
                 on_scene_plan_update(effective_plan)
@@ -3380,14 +4034,29 @@ async def generate_multi_scene_video_via_flow(
     acc_disp = str(raw_acc.get("email") or raw_acc.get("label") or f"Acc #{raw_acc['id']}")
     acc_lock = _get_flow_account_lock(int(raw_acc["id"]))
     async with acc_lock:
-        if clone_mode == "flow_agent_auto":
+        # Primary smooth remake modes: Agent self-generates Nano Banana AI First Frame & AI End Frame -> bridges via First-to-End Video Studio!
+        if clone_mode in ("flow_frames_start_end", "flow_agent_auto", "flow_ai_frames_remake"):
+            ok_fr, err_fr, _ = await _generate_ai_remake_frames_start_end_via_flow(
+                job_id=job_id,
+                raw_acc=raw_acc,
+                scene_plan=effective_plan,
+                flow_model=flow_model,
+                ffmpeg_bin=ffmpeg_bin,
+                dest_mp4=dest_mp4,
+                on_progress=on_progress,
+                on_scene_plan_update=on_scene_plan_update,
+                on_engine_note=on_engine_note,
+            )
+            return ok_fr, err_fr
+
+        if clone_mode == "flow_agent":
             ok_ag, _err_ag, _ = await _generate_via_flow_creative_agent(
                 job_id=job_id,
                 raw_acc=raw_acc,
                 scene_plan=effective_plan,
                 fallback_prompt=fallback_prompt,
                 flow_model=flow_model,
-                ref_frame_path=ref_frame_path,
+                ref_frame_path="",
                 ffmpeg_bin=ffmpeg_bin,
                 dest_mp4=dest_mp4,
                 on_progress=on_progress,
@@ -3398,7 +4067,7 @@ async def generate_multi_scene_video_via_flow(
                 return True, ""
 
             if on_engine_note:
-                on_engine_note(f"🎯 First–End Frame (Fallback từ Agent) · {acc_disp}")
+                on_engine_note(f"🎨 AI Remake Đầu→Cuối (Dự phòng từ Agent) · {acc_disp}")
             for s_item in effective_plan:
                 s_item["status"] = "pending"
                 s_item["clip_url"] = ""
@@ -3406,46 +4075,16 @@ async def generate_multi_scene_video_via_flow(
             if on_scene_plan_update:
                 on_scene_plan_update(effective_plan)
 
-            ok_fr, err_fr, _ = await _generate_frames_start_end_via_flow_browser_session(
+            ok_fr, err_fr, _ = await _generate_ai_remake_frames_start_end_via_flow(
                 job_id=job_id,
                 raw_acc=raw_acc,
                 scene_plan=effective_plan,
                 flow_model=flow_model,
-                ref_frame_path=ref_frame_path,
-                ffmpeg_bin=ffmpeg_bin,
-                dest_mp4=dest_mp4,
-                on_progress=on_progress,
-                on_scene_plan_update=on_scene_plan_update,
-            )
-            return ok_fr, err_fr
-
-        if clone_mode == "flow_agent":
-            ok_ag, err_ag, _ = await _generate_via_flow_creative_agent(
-                job_id=job_id,
-                raw_acc=raw_acc,
-                scene_plan=effective_plan,
-                fallback_prompt=fallback_prompt,
-                flow_model=flow_model,
-                ref_frame_path=ref_frame_path,
                 ffmpeg_bin=ffmpeg_bin,
                 dest_mp4=dest_mp4,
                 on_progress=on_progress,
                 on_scene_plan_update=on_scene_plan_update,
                 on_engine_note=on_engine_note,
-            )
-            return ok_ag, err_ag
-
-        if clone_mode == "flow_frames_start_end":
-            ok_fr, err_fr, _ = await _generate_frames_start_end_via_flow_browser_session(
-                job_id=job_id,
-                raw_acc=raw_acc,
-                scene_plan=effective_plan,
-                flow_model=flow_model,
-                ref_frame_path=ref_frame_path,
-                ffmpeg_bin=ffmpeg_bin,
-                dest_mp4=dest_mp4,
-                on_progress=on_progress,
-                on_scene_plan_update=on_scene_plan_update,
             )
             return ok_fr, err_fr
 
@@ -3455,7 +4094,7 @@ async def generate_multi_scene_video_via_flow(
             scene_plan=effective_plan,
             flow_model=flow_model,
             clone_mode=clone_mode,
-            ref_frame_path=ref_frame_path,
+            ref_frame_path="",
             ffmpeg_bin=ffmpeg_bin,
             dest_mp4=dest_mp4,
             on_progress=on_progress,

@@ -85,8 +85,9 @@ type SortMode = 'strongest' | 'newest' | 'shops';
 type ViewMode = 'grid' | 'table';
 type ScanStage = 'idle' | 'scanning' | 'digging' | 'done';
 type FlowCloneMode =
-  | 'flow_agent_auto'
   | 'flow_frames_start_end'
+  | 'flow_ai_frames_remake'
+  | 'flow_agent_auto'
   | 'flow_agent'
   | 'flow_omni_ingredients'
   | 'flow_veo_i2v'
@@ -506,6 +507,8 @@ function detectFlowEngineKind(rawText: string, allowLooseModels = false): FlowEn
     text.includes('first_end') ||
     text.includes('first-end') ||
     text.includes('first→end') ||
+    text.includes('đầu→cuối') ||
+    text.includes('đầu → cuối') ||
     text.includes('khung đầu')
   ) {
     return 'frames';
@@ -523,11 +526,11 @@ function detectFlowEngineKind(rawText: string, allowLooseModels = false): FlowEn
 function mapFlowEngineKindToBadge(kind: FlowEngineKind, title: string): FlowEngineBadge {
   switch (kind) {
     case 'frames':
-      return { label: '🎯 First Frame → End Frame', bg: 'var(--cam-bg)', color: 'var(--cam)', title };
+      return { label: '🎨 AI Remake Đầu → Cuối', bg: 'var(--la-bg)', color: 'var(--la)', title };
     case 'agent':
       return { label: '🤖 Tác nhân Google Flow', bg: 'var(--xanh-bg)', color: 'var(--link)', title };
     case 'ingredients':
-      return { label: '🧩 OmniFlash Ingredients', bg: 'var(--la-bg)', color: 'var(--la)', title };
+      return { label: '🧩 AI Ingredients Remake', bg: 'var(--cam-bg)', color: 'var(--cam)', title };
     case 't2v':
       return { label: '✍️ Text-to-Video', bg: 'var(--xam)', color: 'var(--chu)', title };
   }
@@ -549,8 +552,9 @@ function getFlowJobEngineBadge(job: CloneJob): FlowEngineBadge | null {
   const mode = (job.clone_mode || '').trim().toLowerCase();
   const modeMap: Record<string, FlowEngineKind> = {
     flow_frames_start_end: 'frames',
+    flow_ai_frames_remake: 'frames',
+    flow_agent_auto: 'frames',
     flow_agent: 'agent',
-    flow_agent_auto: 'agent',
     flow_omni_ingredients: 'ingredients',
     flow_veo_t2v: 't2v',
   };
@@ -693,7 +697,7 @@ export default function App() {
   const [flowAccounts, setFlowAccounts] = useState<FlowAccount[]>([]);
   const [flowModels, setFlowModels] = useState<FlowModelOption[]>([]);
   const [selectedFlowAccountId, setSelectedFlowAccountId] = useState<number>(0);
-  const [flowCloneMode, setFlowCloneMode] = useState<FlowCloneMode>('flow_agent_auto');
+  const [flowCloneMode, setFlowCloneMode] = useState<FlowCloneMode>('flow_frames_start_end');
   const [flowModelId, setFlowModelId] = useState<string>('omni_1_2_flash_10s_portrait');
   const [customFlowModelId, setCustomFlowModelId] = useState<string>('');
   const [syncingFlowModels, setSyncingFlowModels] = useState(false);
@@ -5182,18 +5186,18 @@ export default function App() {
                       style={{ background: 'var(--xam)', borderColor: 'var(--vien-nhe)', color: 'var(--mo)' }}
                     >
                       <div className="font-bold" style={{ color: 'var(--chu)' }}>
-                        📌 Cách dùng chuẩn 3 bước (không cần bấm rời rạc):
+                        📌 Cơ chế Remake Viral Sạch Chính Sách (0% chụp ảnh từ video gốc):
                       </div>
                       <div>
-                        <strong>Bước 1:</strong> Chọn Video gốc + Chế độ Clone (khuyên dùng{' '}
-                        <code>Flow Agent + First–End Frame</code>) + Mô hình Flow.
+                        <strong>Bước 1:</strong> Chọn Video gốc + Chế độ{' '}
+                        <code>🎨 AI Remake First → End Frame</code> + Mô hình Flow.
                       </div>
                       <div>
-                        <strong>Bước 2:</strong> Bấm 1 nút duy nhất{' '}
-                        <strong style={{ color: 'var(--link)' }}>🎬 Mổ xẻ rea-video &amp; Tự viết Prompt</strong> ở mục 4 — hệ thống tách góc máy bằng <code>rea-video</code>, trích khung <code>Đầu → Cuối</code> sạch chữ &amp; viết Prompt khớp đúng Model.
+                        <strong>Bước 2:</strong> Bấm{' '}
+                        <strong style={{ color: 'var(--link)' }}>🎬 Mổ xẻ rea-video &amp; Tự viết Prompt</strong> — Vision chỉ đọc góc máy &amp; hành động để tự viết <code>Prompt Ảnh Đầu (First Frame)</code> + <code>Prompt Ảnh Cuối (End Frame)</code> mới hoàn toàn.
                       </div>
                       <div>
-                        <strong>Bước 3:</strong> Bấm <strong style={{ color: 'var(--la)' }}>Chạy Clone Video bằng Google Flow</strong> để xuất MP4 9:16.
+                        <strong>Bước 3:</strong> Bấm <strong style={{ color: 'var(--la)' }}>Chạy Clone Video bằng Google Flow</strong> — Agent tự dùng <code>🍌 Nano Banana 2.1</code> vẽ bộ Ảnh Đầu → Cuối mới, gắn vào khung rồi xuất &amp; ghép MP4 9:16 chuẩn beat (không dính mặt người/bản quyền gốc).
                       </div>
                     </div>
 
@@ -5209,7 +5213,7 @@ export default function App() {
                           const found = videos.find((x) => x.id === id);
                           if (found) {
                             setPromptScript(found.hook_text || found.title);
-                            setFlowRefFrameUrl(found.thumbnail_url || '');
+                            setFlowRefFrameUrl('');
                             setFlowVeoPrompt(found.rea_breakdown?.veo_prompt_en || '');
                             setFlowScenePlan(found.rea_breakdown?.scene_units || []);
                           } else {
@@ -5255,32 +5259,27 @@ export default function App() {
                           onChange={(e) => setFlowCloneMode(e.target.value as FlowCloneMode)}
                           className="sw-input w-full px-3 py-2 text-xs"
                         >
-                          <option value="flow_agent_auto">
-                            🤖 Google Flow Agent (Tác nhân AI) + Tự dự phòng First–End Frame (Khuyên dùng)
-                          </option>
                           <option value="flow_frames_start_end">
-                            🎯 First Frame → End Frame 9:16 (Khung đầu – Khung cuối · Giống bản gốc nhất)
+                            🎨 AI Remake First → End Frame 9:16 (Agent tự tạo Ảnh Đầu – Cuối mới · Khuyên dùng)
                           </option>
                           <option value="flow_agent">
-                            ✨ Chỉ dùng Tác nhân Google Flow (Creative Agent thuần)
+                            🤖 Tác nhân Google Flow Remake + Tự dự phòng AI First–End Frame
                           </option>
                           <option value="flow_omni_ingredients">
-                            🧩 OmniFlash Thành Phần (Ingredients-to-Video 9:16)
+                            🧩 AI Ingredients Remake 9:16 (Tự tạo Ảnh SP mới làm Thành Phần)
                           </option>
                           <option value="flow_veo_t2v">
                             ✍️ Text-to-Video 9:16 (Dựng mới từ kịch bản)
                           </option>
                         </select>
                         <p className="mt-1 text-[10px] leading-snug" style={{ color: 'var(--mo)' }}>
-                          {flowCloneMode === 'flow_agent_auto'
-                            ? 'Ưu tiên Tác nhân Google Flow với khung Đầu → Cuối; tự dự phòng First–End Frame nếu Agent giới hạn.'
-                            : flowCloneMode === 'flow_frames_start_end'
-                              ? 'Khoá cặp khung Đầu → Cuối sạch chữ trích từ rea-video để giữ bố cục & chuyển động sát bản gốc.'
-                              : flowCloneMode === 'flow_agent'
-                                ? 'Giao toàn bộ cụm cảnh & ảnh tham chiếu cho Tác nhân Google Flow tự đạo diễn.'
-                                : flowCloneMode === 'flow_omni_ingredients'
-                                  ? 'Dùng Ảnh Thành Phần (Ingredients) khoá sản phẩm & bối cảnh theo từng cụm cảnh.'
-                                  : 'Dựng mới hoàn toàn từ kịch bản Text-to-Video 9:16 theo từng cụm cảnh.'}
+                          {flowCloneMode === 'flow_frames_start_end' || flowCloneMode === 'flow_agent_auto' || flowCloneMode === 'flow_ai_frames_remake'
+                            ? 'Agent tự dùng Nano Banana 2.1 tạo Ảnh Đầu → Ảnh Cuối mới khớp đúng góc máy gốc rồi gắn vào Khung hình (0% lấy ảnh video gốc · Không vi phạm chính sách).'
+                            : flowCloneMode === 'flow_agent'
+                              ? 'Giao kịch bản Remake cho Tác nhân Google Flow tự tạo ảnh & video mới; tự dự phòng AI First–End Frame nếu Agent thiếu clip.'
+                              : flowCloneMode === 'flow_omni_ingredients'
+                                ? 'Agent tự tạo Ảnh Sản Phẩm AI mới làm Thành Phần (Ingredients) xuyên suốt các cụm cảnh.'
+                                : 'Dựng mới hoàn toàn từ kịch bản Text-to-Video 9:16 theo từng cụm cảnh.'}
                         </p>
                       </div>
                     </div>
@@ -5445,26 +5444,25 @@ export default function App() {
                         </div>
                       )}
 
-                      {/* Multi-scene rea-video Execution Plan (Ingredients + Per-Scene Prompt + Exact Beat Cut) */}
+                      {/* Multi-scene rea-video AI Remake Execution Plan (100% AI First->End Frames + Exact Beat Cut) */}
                       {(flowScenePlan.length > 0 || (selectedVideo?.rea_breakdown?.scene_units && selectedVideo.rea_breakdown.scene_units.length > 0)) ? (
                         <div className="space-y-2">
                           <div className="flex items-center justify-between text-[11px]">
                             <span className="font-bold" style={{ color: 'var(--chu)' }}>
-                              🎞️ Kế Hoạch Cụm Cảnh theo rea-video ({(flowScenePlan.length > 0 ? flowScenePlan : selectedVideo?.rea_breakdown?.scene_units || []).length} cảnh → tự ghép thành 1 video)
+                              🎞️ Kế Hoạch Remake theo Góc Máy rea-video ({(flowScenePlan.length > 0 ? flowScenePlan : selectedVideo?.rea_breakdown?.scene_units || []).length} cảnh → tự ghép 1 video)
                             </span>
                             <span className="text-[10px] font-semibold" style={{ color: 'var(--la)' }}>
-                              {flowCloneMode === 'flow_frames_start_end' || flowCloneMode === 'flow_agent_auto'
-                                ? 'Khoá khung Đầu → Cuối sạch · Cắt đúng thời lượng'
-                                : 'Khoá cứng Ảnh SP sạch · Cắt đúng thời lượng'}
+                              🛡️ Tự tạo Ảnh Đầu → Cuối bằng AI (0% ảnh gốc)
                             </span>
                           </div>
-                          <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                          <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
                             {(flowScenePlan.length > 0 ? flowScenePlan : selectedVideo?.rea_breakdown?.scene_units || []).map((sc, idx) => {
-                              const startFrameSrc =
-                                sc.start_frame_url || sc.ref_url || flowRefFrameUrl || selectedVideo?.thumbnail_url;
-                              const endFrameSrc = sc.end_frame_url;
+                              const aiStartFrameSrc = sc.start_frame_url && sc.start_frame_url.includes('_ai_') ? sc.start_frame_url : '';
+                              const aiEndFrameSrc = sc.end_frame_url && sc.end_frame_url.includes('_ai_') ? sc.end_frame_url : '';
                               const useFramesPrompt =
-                                flowCloneMode === 'flow_frames_start_end' || flowCloneMode === 'flow_agent_auto';
+                                flowCloneMode === 'flow_frames_start_end' ||
+                                flowCloneMode === 'flow_ai_frames_remake' ||
+                                flowCloneMode === 'flow_agent_auto';
                               const scenePromptValue = useFramesPrompt
                                 ? sc.frames_prompt_en || sc.flow_prompt_en
                                 : sc.flow_prompt_en;
@@ -5480,13 +5478,21 @@ export default function App() {
                                       {sc.title_vi}
                                     </span>
                                     <div className="flex items-center gap-1.5 shrink-0">
-                                      {sc.same_scene_as_prev && (
+                                      {sc.reuse_prev_end_as_start ? (
                                         <span
                                           className="px-1.5 py-0.5 rounded text-[9px] font-bold"
                                           style={{ background: 'var(--xanh-bg)', color: 'var(--link)' }}
-                                          title="Tự nối ảnh cuối cảnh trước làm tham chiếu để giữ đồng nhất bàn/tay/điện thoại"
+                                          title="Dùng lại chính xác Ảnh Cuối AI của cảnh trước làm Ảnh Đầu của cảnh này để cắt chuyển mượt 100%"
                                         >
-                                          Nối mạch cảnh trước
+                                          🔗 Nối liền Ảnh Cuối trước
+                                        </span>
+                                      ) : (
+                                        <span
+                                          className="px-1.5 py-0.5 rounded text-[9px] font-bold"
+                                          style={{ background: 'var(--la-bg)', color: 'var(--la)' }}
+                                          title="Nano Banana 2.1 tự vẽ cặp Ảnh Đầu → Ảnh Cuối mới (không lấy từ video gốc)"
+                                        >
+                                          🎨 AI vẽ Đầu → Cuối
                                         </span>
                                       )}
                                       <span
@@ -5499,62 +5505,50 @@ export default function App() {
                                   </div>
                                   {sc.action_vi && (
                                     <div className="text-[10px]" style={{ color: 'var(--mo)' }}>
-                                      Hành động: {sc.action_vi}
+                                      Hành động Remake: {sc.action_vi}
                                     </div>
                                   )}
                                   <div className="flex gap-2">
-                                    {flowCloneMode !== 'flow_veo_t2v' && (startFrameSrc || endFrameSrc) && (
-                                      endFrameSrc ? (
-                                        <div className="flex items-center gap-1 shrink-0">
-                                          {startFrameSrc && (
-                                            <div
-                                              className="relative w-11 h-16 rounded-lg overflow-hidden bg-black shrink-0 border"
-                                              style={{ borderColor: 'var(--vien-nhe)' }}
-                                              title="Khung đầu (First Frame) sạch trích từ rea-video"
-                                            >
-                                              <img
-                                                src={startFrameSrc}
-                                                alt={`Scene ${idx + 1} start frame`}
-                                                className="w-full h-full object-cover"
-                                              />
-                                              <span className="absolute bottom-0 inset-x-0 bg-black/75 text-white text-[9px] font-bold text-center leading-tight py-0.5">
-                                                Đầu
-                                              </span>
-                                            </div>
-                                          )}
-                                          <span className="text-[10px] font-bold shrink-0" style={{ color: 'var(--mo)' }}>
-                                            →
-                                          </span>
+                                    {flowCloneMode !== 'flow_veo_t2v' && (aiStartFrameSrc || aiEndFrameSrc) && (
+                                      <div className="flex items-center gap-1 shrink-0">
+                                        {aiStartFrameSrc && (
                                           <div
                                             className="relative w-11 h-16 rounded-lg overflow-hidden bg-black shrink-0 border"
                                             style={{ borderColor: 'var(--vien-nhe)' }}
-                                            title="Khung cuối (End Frame) sạch trích từ rea-video"
+                                            title="Ảnh Đầu (First Frame) tự tạo mới 100% bằng Nano Banana AI"
                                           >
                                             <img
-                                              src={endFrameSrc}
-                                              alt={`Scene ${idx + 1} end frame`}
+                                              src={aiStartFrameSrc}
+                                              alt={`Scene ${idx + 1} AI start frame`}
                                               className="w-full h-full object-cover"
                                             />
-                                            <span className="absolute bottom-0 inset-x-0 bg-black/75 text-white text-[9px] font-bold text-center leading-tight py-0.5">
-                                              Cuối
+                                            <span className="absolute bottom-0 inset-x-0 bg-black/75 text-white text-[8px] font-bold text-center leading-tight py-0.5">
+                                              AI Đầu
                                             </span>
                                           </div>
-                                        </div>
-                                      ) : (
-                                        startFrameSrc && (
-                                          <div
-                                            className="w-12 h-16 rounded-lg overflow-hidden bg-black shrink-0 border"
-                                            style={{ borderColor: 'var(--vien-nhe)' }}
-                                            title="Ảnh Sản Phẩm Sạch khoá cố định làm Thành phần cho cảnh này"
-                                          >
-                                            <img
-                                              src={startFrameSrc}
-                                              alt={`Scene ${idx + 1} ref`}
-                                              className="w-full h-full object-cover"
-                                            />
-                                          </div>
-                                        )
-                                      )
+                                        )}
+                                        {aiEndFrameSrc && (
+                                          <>
+                                            <span className="text-[10px] font-bold shrink-0" style={{ color: 'var(--mo)' }}>
+                                              →
+                                            </span>
+                                            <div
+                                              className="relative w-11 h-16 rounded-lg overflow-hidden bg-black shrink-0 border"
+                                              style={{ borderColor: 'var(--vien-nhe)' }}
+                                              title="Ảnh Cuối (End Frame) tự tạo mới 100% bằng Nano Banana AI"
+                                            >
+                                              <img
+                                                src={aiEndFrameSrc}
+                                                alt={`Scene ${idx + 1} AI end frame`}
+                                                className="w-full h-full object-cover"
+                                              />
+                                              <span className="absolute bottom-0 inset-x-0 bg-black/75 text-white text-[8px] font-bold text-center leading-tight py-0.5">
+                                                AI Cuối
+                                              </span>
+                                            </div>
+                                          </>
+                                        )}
+                                      </div>
                                     )}
                                     <textarea
                                       rows={2}
@@ -5571,8 +5565,59 @@ export default function App() {
                                         setFlowScenePlan(baseList);
                                       }}
                                       className="sw-input flex-1 p-2 text-[11px] leading-snug"
+                                      title="Prompt chuyển động Video nối từ Ảnh Đầu AI sang Ảnh Cuối AI"
                                     />
                                   </div>
+
+                                  {(sc.ai_start_image_prompt_en || sc.ai_end_image_prompt_en) && (
+                                    <details className="text-[10px] pt-0.5">
+                                      <summary className="cursor-pointer font-semibold select-none" style={{ color: 'var(--link)' }}>
+                                        🎨 Xem / Sửa Prompt tự vẽ Ảnh Đầu (First Frame) &amp; Ảnh Cuối (End Frame)
+                                      </summary>
+                                      <div className="mt-1.5 space-y-1.5">
+                                        {!sc.reuse_prev_end_as_start && (
+                                          <div>
+                                            <div className="font-semibold mb-0.5" style={{ color: 'var(--mo)' }}>
+                                              Ảnh Đầu AI (First Frame — Nano Banana 2.1):
+                                            </div>
+                                            <textarea
+                                              rows={2}
+                                              value={sc.ai_start_image_prompt_en || ''}
+                                              onChange={(e) => {
+                                                const val = e.target.value;
+                                                const baseList =
+                                                  flowScenePlan.length > 0
+                                                    ? [...flowScenePlan]
+                                                    : [...(selectedVideo?.rea_breakdown?.scene_units || [])];
+                                                baseList[idx] = { ...baseList[idx], ai_start_image_prompt_en: val };
+                                                setFlowScenePlan(baseList);
+                                              }}
+                                              className="sw-input w-full p-1.5 text-[10px] leading-snug"
+                                            />
+                                          </div>
+                                        )}
+                                        <div>
+                                          <div className="font-semibold mb-0.5" style={{ color: 'var(--mo)' }}>
+                                            Ảnh Cuối AI (End Frame — Nano Banana 2.1):
+                                          </div>
+                                          <textarea
+                                            rows={2}
+                                            value={sc.ai_end_image_prompt_en || ''}
+                                            onChange={(e) => {
+                                              const val = e.target.value;
+                                              const baseList =
+                                                flowScenePlan.length > 0
+                                                  ? [...flowScenePlan]
+                                                  : [...(selectedVideo?.rea_breakdown?.scene_units || [])];
+                                              baseList[idx] = { ...baseList[idx], ai_end_image_prompt_en: val };
+                                              setFlowScenePlan(baseList);
+                                            }}
+                                            className="sw-input w-full p-1.5 text-[10px] leading-snug"
+                                          />
+                                        </div>
+                                      </div>
+                                    </details>
+                                  )}
                                 </div>
                               );
                             })}
@@ -5580,20 +5625,11 @@ export default function App() {
                         </div>
                       ) : (
                         <div className="flex gap-3">
-                          {flowCloneMode !== 'flow_veo_t2v' && (flowRefFrameUrl || selectedVideo?.thumbnail_url) && (
-                            <div className="w-20 h-32 rounded-xl overflow-hidden bg-black shrink-0 border" style={{ borderColor: 'var(--vien-nhe)' }}>
-                              <img
-                                src={flowRefFrameUrl || selectedVideo?.thumbnail_url}
-                                alt="Reference frame"
-                                className="w-full h-full object-cover"
-                              />
-                            </div>
-                          )}
                           <textarea
                             rows={4}
                             value={flowVeoPrompt}
                             onChange={(e) => setFlowVeoPrompt(e.target.value)}
-                            placeholder="Bấm '🎬 Mổ xẻ rea-video & Tự viết Prompt' ở góc trên phải để lập Kế Hoạch Cụm Cảnh & Ảnh Thành Phần sạch theo đúng kịch bản rea-video..."
+                            placeholder="Bấm '🎬 Mổ xẻ rea-video & Tự viết Prompt' ở góc trên phải để lập Kế Hoạch Remake Cụm Cảnh & Prompt tự tạo Ảnh Đầu → Ảnh Cuối bằng AI (0% lấy ảnh từ video gốc)..."
                             className="sw-input flex-1 p-3 text-xs leading-relaxed"
                           />
                         </div>
@@ -5808,6 +5844,43 @@ export default function App() {
                                       );
                                     })}
                                   </div>
+                                  {activeFlowJob.scene_plan.some(
+                                    (s) => (s.start_frame_url && s.start_frame_url.includes('_ai_')) || (s.end_frame_url && s.end_frame_url.includes('_ai_'))
+                                  ) && (
+                                    <div className="pt-1.5 border-t flex flex-wrap items-center gap-2" style={{ borderColor: 'var(--vien-nhe)' }}>
+                                      <span className="text-[9px] font-bold" style={{ color: 'var(--la)' }}>
+                                        🎨 Ảnh Đầu → Cuối do AI tự tạo:
+                                      </span>
+                                      {activeFlowJob.scene_plan.map((sc) =>
+                                        (sc.start_frame_url?.includes('_ai_') || sc.end_frame_url?.includes('_ai_')) ? (
+                                          <div key={sc.unit_index} className="flex items-center gap-1 rounded-lg p-1 border" style={{ background: 'var(--xam)', borderColor: 'var(--vien-nhe)' }}>
+                                            <span className="text-[9px] font-bold px-1" style={{ color: 'var(--mo)' }}>
+                                              C{sc.unit_index}
+                                            </span>
+                                            {sc.start_frame_url?.includes('_ai_') && (
+                                              <img
+                                                src={sc.start_frame_url}
+                                                alt={`C${sc.unit_index} AI start`}
+                                                className="w-7 h-10 rounded object-cover border"
+                                                style={{ borderColor: 'var(--vien-nhe)' }}
+                                                title={`Cảnh ${sc.unit_index} — Ảnh Đầu (Nano Banana AI tự tạo)`}
+                                              />
+                                            )}
+                                            <span className="text-[9px]" style={{ color: 'var(--mo)' }}>→</span>
+                                            {sc.end_frame_url?.includes('_ai_') && (
+                                              <img
+                                                src={sc.end_frame_url}
+                                                alt={`C${sc.unit_index} AI end`}
+                                                className="w-7 h-10 rounded object-cover border"
+                                                style={{ borderColor: 'var(--vien-nhe)' }}
+                                                title={`Cảnh ${sc.unit_index} — Ảnh Cuối (Nano Banana AI tự tạo)`}
+                                              />
+                                            )}
+                                          </div>
+                                        ) : null
+                                      )}
+                                    </div>
+                                  )}
                                 </div>
                               )}
 
